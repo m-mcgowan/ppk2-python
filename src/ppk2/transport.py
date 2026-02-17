@@ -5,7 +5,9 @@ or potentially Web Serial (browser/WASI) in the future.
 """
 
 import logging
+import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 import serial
 import serial.tools.list_ports
@@ -16,6 +18,15 @@ logger = logging.getLogger(__name__)
 NORDIC_VID = 0x1915
 PPK2_PID = 0xC00A
 PPK2_BAUD = 115200
+
+
+@dataclass
+class PPK2Port:
+    """Information about a discovered PPK2 device."""
+
+    port: str
+    serial_number: str
+    location: str
 
 
 class Transport(ABC):
@@ -90,13 +101,31 @@ class SerialTransport(Transport):
         return self._serial is not None and self._serial.is_open
 
 
-def list_ppk2_devices() -> list[str]:
+def list_ppk2_devices() -> list[PPK2Port]:
     """Find all connected PPK2 devices by USB VID/PID.
 
-    Returns a list of serial port paths.
+    The PPK2 enumerates two CDC ACM interfaces per device. The data/command
+    port has a USB location ending in '1'; the auxiliary port (interface 2,
+    reserved/unused) is filtered out.
+
+    On Windows, only one port is typically visible.
+
+    Returns a list of PPK2Port with port path, serial number, and location.
     """
-    ports = []
+    devices = []
     for port in serial.tools.list_ports.comports():
-        if port.vid == NORDIC_VID and port.pid == PPK2_PID:
-            ports.append(port.device)
-    return sorted(ports)
+        if port.vid != NORDIC_VID or port.pid != PPK2_PID:
+            continue
+        location = port.location or ""
+        # Filter to the data port (interface 1). On Windows only one port
+        # is enumerated so location check may not apply.
+        if os.name != "nt" and location and not location.endswith("1"):
+            continue
+        devices.append(
+            PPK2Port(
+                port=port.device,
+                serial_number=(port.serial_number or "")[:8],
+                location=location,
+            )
+        )
+    return sorted(devices, key=lambda d: d.port)
