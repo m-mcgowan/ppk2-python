@@ -1,0 +1,44 @@
+name: "PPK2 Power Profile Report"
+description: "Generate power profiling reports from .ppk2 measurement files"
+inputs:
+  files:
+    description: "Glob pattern or comma-separated list of .ppk2 files"
+    required: true
+  thresholds:
+    description: >
+      Optional JSON mapping of test name to max current in uA.
+      Example: '{"deep_sleep": 10, "idle": 500}'
+    required: false
+    default: "{}"
+  html-report:
+    description: "Path for the HTML report artifact. Empty to skip."
+    required: false
+    default: "power-profile-report.html"
+  title:
+    description: "Report title"
+    required: false
+    default: "Power Profile Report"
+outputs:
+  passed:
+    description: "Whether all thresholds passed ('true' or 'false')"
+    value: ${{ steps.report.outputs.passed }}
+  summary:
+    description: "Markdown summary table"
+    value: ${{ steps.report.outputs.summary }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install ppk2-python
+      shell: bash
+      run: pip install "${{ github.action_path }}[report]"
+
+    - name: Generate report
+      id: report
+      shell: bash
+      env:
+        INPUT_FILES: ${{ inputs.files }}
+        INPUT_THRESHOLDS: ${{ inputs.thresholds }}
+        INPUT_HTML_REPORT: ${{ inputs.html-report }}
+        INPUT_TITLE: ${{ inputs.title }}
+      run: python "${{ github.action_path }}/action_report.py"
