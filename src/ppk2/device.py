@@ -230,6 +230,13 @@ class PPK2Device:
     def _connect(self) -> None:
         """Open transport and read device metadata."""
         self._transport.open()
+
+        # Stop any in-progress measurement and drain stale data.
+        # The PPK2 may still be streaming from a previous session.
+        self._send(commands.average_stop())
+        time.sleep(0.1)
+        self._transport.read_available()
+
         self._send(commands.get_metadata())
         self._metadata = self._read_metadata()
         self._modifiers.update_from_metadata(self._metadata)
