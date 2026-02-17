@@ -1,0 +1,156 @@
+/* Layout — theme-independent rules using CSS custom properties */
+
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+       margin: 0; padding: 20px 28px; color: var(--text); background: var(--bg); }
+h1 { color: var(--heading); margin: 0 0 2px; font-size: 1.6em; }
+h2 { color: var(--heading); margin-top: 32px; font-size: 1.25em;
+     border-bottom: 2px solid var(--accent); padding-bottom: 4px; }
+h3 { color: var(--text-muted); font-size: 1em; margin: 16px 0 4px; }
+
+/* Summary cards */
+.summary-cards { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0; justify-content: center; }
+.summary-card {
+    display: inline-flex; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); overflow: hidden;
+    box-shadow: 0 1px 2px var(--shadow);
+}
+.summary-card.pass { border-left: 4px solid var(--pass); }
+.summary-card.fail { border-left: 4px solid var(--fail); }
+.summary-card .stat {
+    text-align: center; padding: 10px 12px;
+    border-right: 1px solid var(--border);
+}
+.summary-card .stat:last-child { border-right: none; }
+.summary-card .value {
+    display: block; font-size: 1.4em; font-weight: 700;
+    color: var(--heading); font-family: var(--mono);
+}
+.summary-card .value small { font-size: 0.55em; font-weight: 400; color: var(--text-muted); }
+.summary-card .label {
+    display: block; font-size: 0.75em; color: var(--text-muted);
+    text-transform: lowercase; margin-top: 2px;
+}
+.summary-card .status-pass { color: var(--pass); font-weight: 700; }
+.summary-card .status-fail { color: var(--fail); font-weight: 700; }
+.summary-card .data-loss { font-size: 0.8em; color: #856404; font-style: italic; }
+
+/* Window stats — PPK2 style */
+.stats-row {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    justify-content: center; margin-bottom: 8px;
+}
+.stats-row > div {
+    flex: 1 1 calc(50% - 8px); min-width: min-content;
+    display: flex; flex-direction: column;
+}
+.window-stats {
+    display: flex; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); overflow: hidden;
+    box-shadow: 0 1px 2px var(--shadow);
+    flex: 1;
+}
+.window-stats .stat {
+    flex: 1; text-align: center; padding: 10px 12px;
+    border-right: 1px solid var(--border);
+}
+.window-stats .stat:last-child { border-right: none; }
+.window-stats .value {
+    display: block; font-size: 1.4em; font-weight: 700;
+    color: var(--heading); font-family: var(--mono);
+}
+.window-stats .value small {
+    font-size: 0.55em; font-weight: 400; color: var(--text-muted);
+}
+.window-stats .label {
+    display: block; font-size: 0.75em; color: var(--text-muted);
+    text-transform: lowercase; margin-top: 2px;
+}
+.time-span {
+    display: flex; justify-content: center; align-items: center; gap: 16px;
+    font-size: 0.85em; color: var(--text-muted);
+    font-family: var(--mono); margin: 4px 0 2px;
+}
+.time-span .ts { text-align: center; line-height: 1.3; }
+.time-span .ts .sub { display: block; font-size: 0.9em; }
+.time-span .dur { font-size: 0.85em; }
+
+/* Selection stats */
+.sel-wrapper { flex: 1; display: flex; flex-direction: column; }
+.sel-title-row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 3px;
+}
+.sel-title-row .sel-header {
+    font-size: 0.7em; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-muted);
+}
+.sel-title-row button {
+    padding: 2px 10px; border: 1px solid var(--border); border-radius: 3px;
+    background: var(--card); cursor: pointer; font-size: 11px; color: var(--heading);
+}
+.sel-title-row button:hover { background: var(--accent-light); }
+.selection-bar {
+    display: grid; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--selection-bg); overflow: hidden;
+    box-shadow: 0 1px 2px var(--shadow);
+    flex: 1;
+}
+.selection-bar .sel-layer {
+    grid-area: 1 / 1; display: flex; align-items: center;
+}
+.selection-bar .stat {
+    flex: 1; text-align: center; padding: 10px 12px;
+    border-right: 1px solid var(--border);
+}
+.selection-bar .stat:last-child { border-right: none; }
+.selection-bar .value {
+    display: block; font-size: 1.4em; font-weight: 700;
+    color: var(--heading); font-family: var(--mono);
+}
+.selection-bar .value small { font-size: 0.55em; font-weight: 400; color: var(--text-muted); }
+.selection-bar .label {
+    display: block; font-size: 0.75em; color: var(--text-muted);
+    text-transform: lowercase; margin-top: 2px;
+}
+.selection-bar .hint {
+    flex: 1; text-align: center; color: var(--text-muted);
+    font-size: 0.85em; padding: 8px;
+}
+
+/* Toolbar row — zoom presets + channel buttons */
+.toolbar { display: flex; align-items: center; gap: 12px;
+            margin: 6px 0; flex-wrap: wrap; }
+.toolbar .group { display: flex; align-items: center; gap: 4px; }
+.toolbar .group-label { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.toolbar button {
+    padding: 3px 10px; border: 1px solid var(--border);
+    border-radius: 4px; background: var(--card); cursor: pointer;
+    font-size: 12px; color: var(--heading); transition: all 0.15s;
+}
+.toolbar button:hover { background: var(--accent-light); border-color: var(--accent); }
+.toolbar button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Crosshair hover tags */
+.y-hover-tag {
+    position: absolute; right: 20px; pointer-events: none;
+    background: var(--tag-bg); color: var(--tag-text); padding: 2px 6px;
+    border-radius: 3px; font-size: 12px; font-family: var(--mono);
+    white-space: nowrap; transform: translateY(-50%);
+    z-index: 10; display: none;
+}
+.x-hover-tag {
+    position: absolute; top: 0; pointer-events: none;
+    background: var(--tag-bg); color: var(--tag-text); padding: 3px 8px;
+    border-radius: 3px; font-size: 11px; font-family: var(--mono);
+    white-space: nowrap; transform: translateX(-50%);
+    z-index: 10; display: none; text-align: center; line-height: 1.3;
+}
+
+/* Hide plotly modebar */
+.js-plotly-plot .modebar { display: none !important; }
+/* Disable rangeslider body drag (prevents compression bug); handles still work */
+.rangeslider-grabarea { pointer-events: none !important; }
+.attribution {
+    float: right; font-size: 0.75em; color: var(--text-muted);
+    margin-top: 4px;
+}
