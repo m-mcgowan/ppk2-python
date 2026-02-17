@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install package with dev dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
+          pytest tests/ -v --tb=short --junitxml=results.xml | tee test_output.txt
+
+      - name: Test summary
+        if: always()
+        run: |
+          source .venv/bin/activate
+          python - <<'PYEOF' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse("results.xml")
+          suite = tree.getroot().find("testsuite")
+          tests = int(suite.get("tests", 0))
+          failures = int(suite.get("failures", 0))
+          errors = int(suite.get("errors", 0))
+          skipped = int(suite.get("skipped", 0))
+          time_s = float(suite.get("time", 0))
+          passed = tests - failures - errors - skipped
+
+          status = "✅" if failures == 0 and errors == 0 else "❌"
+          print(f"### {status} Python ${{ matrix.python-version }} — {passed}/{tests} passed ({time_s:.1f}s)\n")
+
+          if failures > 0 or errors > 0:
+              print("| Test | Status | Message |")
+              print("|------|--------|---------|")
+              for tc in suite.iter("testcase"):
+                  fail = tc.find("failure")
+                  err = tc.find("error")
+                  if fail is not None:
+                      msg = fail.get("message", "").split("\n")[0][:80]
+                      print(f"| `{tc.get('name')}` | ❌ Fail | {msg} |")
+                  elif err is not None:
+                      msg = err.get("message", "").split("\n")[0][:80]
+                      print(f"| `{tc.get('name')}` | 💥 Error | {msg} |")
+          PYEOF
+
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-3.13-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install package
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -e ".[dev]"
+
+      - name: Generate example reports
+        run: |
+          source .venv/bin/activate
+          python examples/generate_reports.py
+
+      - name: Build pages site
+        run: |
+          mkdir -p _site
+          cp examples/output/*.html _site/
+          cat > _site/index.html <<'INDEXEOF'
+          <!DOCTYPE html>
+          <html><head><title>PPK2 Example Reports</title>
+          <style>
+            body { font-family: system-ui; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+            a { display: block; margin: 8px 0; }
+          </style></head>
+          <body>
+            <h1>PPK2 Example Reports</h1>
+            <a href="example_light.html">☀️ Light theme</a>
+            <a href="example_dark.html">🌙 Dark theme</a>
+            <a href="example_auto.html">🔄 Auto theme (follows browser)</a>
+          </body></html>
+          INDEXEOF
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Report summary
+        run: |
+          PAGES_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<SUMEOF
+          ### 📊 Example Reports
+
+          | Theme | Link |
+          |-------|------|
+          | ☀️ Light | [example_light.html](${PAGES_URL}/example_light.html) |
+          | 🌙 Dark | [example_dark.html](${PAGES_URL}/example_dark.html) |
+          | 🔄 Auto | [example_auto.html](${PAGES_URL}/example_auto.html) |
+          SUMEOF
+
+  deploy-pages:
+    if: github.ref == 'refs/heads/main'
+    needs: examples
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

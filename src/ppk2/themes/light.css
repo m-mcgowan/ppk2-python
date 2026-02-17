@@ -1,0 +1,12 @@
+/* Light theme */
+:root {
+    --bg: #f8f9fa; --card: #fff; --border: #dee2e6;
+    --heading: #00365a; --accent: #00a9ce; --accent-light: #e6f7fb;
+    --text: #212529; --text-muted: #6c757d;
+    --pass: #198754; --pass-bg: #d1e7dd;
+    --fail: #dc3545; --fail-bg: #f8d7da;
+    --shadow: rgba(0,0,0,0.05);
+    --selection-bg: #f0f4f8;
+    --tag-bg: #00365a; --tag-text: #fff;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}

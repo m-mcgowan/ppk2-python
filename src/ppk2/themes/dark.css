@@ -1,0 +1,12 @@
+/* Dark theme — electric cyan on dark grey */
+:root {
+    --bg: #1a1a2e; --card: #252540; --border: #3a3a5c;
+    --heading: #e0e0f0; --accent: #00e5ff; --accent-light: #1a2a3e;
+    --text: #d0d0e0; --text-muted: #8888aa;
+    --pass: #2dd4bf; --pass-bg: #1a2e2e;
+    --fail: #fb7185; --fail-bg: #2e1a22;
+    --shadow: rgba(0,0,0,0.3);
+    --selection-bg: #2a2a45;
+    --tag-bg: #00e5ff; --tag-text: #1a1a2e;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
