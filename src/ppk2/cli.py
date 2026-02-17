@@ -1,6 +1,11 @@
 """PPK2 command-line interface.
 
 Usage:
+    ppk2 list                       List connected PPK2 devices
+    ppk2 power on|off [--port ...]  Toggle DUT power
+    ppk2 mode source|ampere [...]   Set measurement mode
+    ppk2 voltage 3300 [--port ...]  Set source voltage (mV)
+    ppk2 measure 5.0 [--port ...]   Measure for N seconds
     ppk2 open <file.ppk2>           Open a .ppk2 file in nRF Connect Power Profiler
     ppk2 report <file.ppk2> ...     Generate reports from .ppk2 files
     ppk2 info <file.ppk2>           Show file metadata and statistics
@@ -10,6 +15,87 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+
+
+def _open_device(port: str | None) -> "PPK2Device":
+    """Open a PPK2 device, with user-friendly error messages."""
+    from .device import PPK2Device
+
+    try:
+        return PPK2Device.open(port)
+    except ConnectionError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    """List connected PPK2 devices."""
+    from .transport import list_ppk2_devices
+
+    devices = list_ppk2_devices()
+    if not devices:
+        print("No PPK2 devices found.")
+        return 1
+
+    for d in devices:
+        print(f"{d.port}  serial={d.serial_number}  location={d.location}")
+    return 0
+
+
+def cmd_power(args: argparse.Namespace) -> int:
+    """Toggle DUT power on/off."""
+    on = args.state == "on"
+    with _open_device(args.port) as ppk:
+        ppk.toggle_dut_power(on)
+        print(f"DUT power {'ON' if on else 'OFF'}")
+    return 0
+
+
+def cmd_mode(args: argparse.Namespace) -> int:
+    """Set PPK2 measurement mode."""
+    with _open_device(args.port) as ppk:
+        if args.mode == "source":
+            ppk.use_source_meter()
+            print("Mode: source meter (PPK2 supplies power)")
+        else:
+            ppk.use_ampere_meter()
+            print("Mode: ampere meter (external power)")
+    return 0
+
+
+def cmd_voltage(args: argparse.Namespace) -> int:
+    """Set source voltage in millivolts."""
+    with _open_device(args.port) as ppk:
+        ppk.set_source_voltage(args.millivolts)
+        print(f"Source voltage: {args.millivolts} mV")
+    return 0
+
+
+def cmd_measure(args: argparse.Namespace) -> int:
+    """Take a quick measurement and print stats."""
+    from .report import format_current
+
+    with _open_device(args.port) as ppk:
+        if args.source:
+            ppk.use_source_meter()
+            ppk.set_source_voltage(args.source)
+            ppk.toggle_dut_power(True)
+
+        result = ppk.measure(args.duration)
+        print(f"Duration: {result.duration_s:.3f} s")
+        print(f"Samples:  {result.sample_count:,}")
+        print(f"Lost:     {result.lost_samples:,}")
+        print(f"Mean:     {format_current(result.mean_ua)}")
+        print(f"Min:      {format_current(result.min_ua)}")
+        print(f"Max:      {format_current(result.max_ua)}")
+        print(f"P99:      {format_current(result.p99_ua)}")
+
+        if args.output:
+            from .ppk2file import save_ppk2
+
+            save_ppk2(result, args.output)
+            print(f"\nSaved: {args.output}")
+    return 0
 
 
 def cmd_open(args: argparse.Namespace) -> int:
@@ -190,6 +276,35 @@ def main() -> int:
     )
     sub = parser.add_subparsers(dest="command")
 
+    # --- Device commands ---
+
+    # ppk2 list
+    sub.add_parser("list", help="List connected PPK2 devices")
+
+    # ppk2 power
+    p_power = sub.add_parser("power", help="Toggle DUT power on/off")
+    p_power.add_argument("state", choices=["on", "off"], help="Power state")
+    p_power.add_argument("--port", help="Serial port (auto-detect if omitted)")
+
+    # ppk2 mode
+    p_mode = sub.add_parser("mode", help="Set measurement mode")
+    p_mode.add_argument("mode", choices=["source", "ampere"], help="source=PPK2 powers DUT, ampere=external supply")
+    p_mode.add_argument("--port", help="Serial port (auto-detect if omitted)")
+
+    # ppk2 voltage
+    p_voltage = sub.add_parser("voltage", help="Set source voltage (mV)")
+    p_voltage.add_argument("millivolts", type=int, help="Voltage in millivolts (800-5000)")
+    p_voltage.add_argument("--port", help="Serial port (auto-detect if omitted)")
+
+    # ppk2 measure
+    p_measure = sub.add_parser("measure", help="Take a measurement")
+    p_measure.add_argument("duration", type=float, help="Duration in seconds")
+    p_measure.add_argument("--port", help="Serial port (auto-detect if omitted)")
+    p_measure.add_argument("--source", type=int, metavar="MV", help="Use source mode at this voltage (mV)")
+    p_measure.add_argument("-o", "--output", help="Save to .ppk2 file")
+
+    # --- File commands ---
+
     # ppk2 open
     p_open = sub.add_parser("open", help="Open .ppk2 in nRF Connect Power Profiler")
     p_open.add_argument("file", help="Path to .ppk2 file")
@@ -233,6 +348,11 @@ def main() -> int:
         return 0
 
     handlers = {
+        "list": cmd_list,
+        "power": cmd_power,
+        "mode": cmd_mode,
+        "voltage": cmd_voltage,
+        "measure": cmd_measure,
         "open": cmd_open,
         "report": cmd_report,
         "info": cmd_info,

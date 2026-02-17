@@ -10,7 +10,7 @@ import time
 from . import commands
 from .conversion import SpikeFilter, adc_to_microamps
 from .parser import SampleParser, parse_metadata
-from .transport import SerialTransport, Transport, list_ppk2_devices
+from .transport import PPK2Port, SerialTransport, Transport, list_ppk2_devices
 from .types import MeasurementResult, Modifiers, Sample
 
 logger = logging.getLogger(__name__)
@@ -54,10 +54,10 @@ class PPK2Device:
             An initialized PPK2Device (use as context manager).
         """
         if port is None:
-            ports = list_ppk2_devices()
-            if not ports:
+            devices = list_ppk2_devices()
+            if not devices:
                 raise ConnectionError("No PPK2 device found")
-            port = ports[0]
+            port = devices[0].port
             logger.info("Auto-discovered PPK2 at %s", port)
 
         transport = SerialTransport(port)
@@ -72,11 +72,15 @@ class PPK2Device:
         self.close()
 
     def close(self) -> None:
-        """Close the device, stopping measurement if active."""
+        """Close the serial connection.
+
+        Leaves the PPK2 in its current state (power, mode, voltage).
+        To explicitly power down the DUT before closing, call
+        ``toggle_dut_power(False)`` first.
+        """
         if self._is_measuring:
             self.stop_measuring()
         if self._transport.is_open:
-            self._send(commands.device_running_set(False))
             self._transport.close()
 
     @property
@@ -230,6 +234,13 @@ class PPK2Device:
     def _connect(self) -> None:
         """Open transport and read device metadata."""
         self._transport.open()
+
+        # Stop any in-progress measurement and drain stale data.
+        # The PPK2 may still be streaming from a previous session.
+        self._send(commands.average_stop())
+        time.sleep(0.1)
+        self._transport.read_available()
+
         self._send(commands.get_metadata())
         self._metadata = self._read_metadata()
         self._modifiers.update_from_metadata(self._metadata)
