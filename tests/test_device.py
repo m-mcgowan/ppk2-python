@@ -210,9 +210,8 @@ class TestDeviceClose:
 
         opcodes = [c[0] for c in mock.write_log]
         assert AVERAGE_STOP in opcodes
-        assert DEVICE_RUNNING_SET in opcodes
 
-    def test_close_turns_off_dut_power(self):
+    def test_close_preserves_dut_power_state(self):
         mock = MockTransport()
         dev = PPK2Device(mock)
         dev._connect()
@@ -220,8 +219,9 @@ class TestDeviceClose:
         mock.write_log.clear()
         dev.close()
 
+        # close() should NOT send device_running_set — preserves current state
         dut_cmds = [c for c in mock.write_log if c[0] == DEVICE_RUNNING_SET]
-        assert dut_cmds[-1] == bytes([DEVICE_RUNNING_SET, 0])
+        assert len(dut_cmds) == 0
 
     def test_context_manager(self):
         mock = MockTransport()

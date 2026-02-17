@@ -72,11 +72,15 @@ class PPK2Device:
         self.close()
 
     def close(self) -> None:
-        """Close the device, stopping measurement if active."""
+        """Close the serial connection.
+
+        Leaves the PPK2 in its current state (power, mode, voltage).
+        To explicitly power down the DUT before closing, call
+        ``toggle_dut_power(False)`` first.
+        """
         if self._is_measuring:
             self.stop_measuring()
         if self._transport.is_open:
-            self._send(commands.device_running_set(False))
             self._transport.close()
 
     @property
