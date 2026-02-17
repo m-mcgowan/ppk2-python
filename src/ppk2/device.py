@@ -10,7 +10,7 @@ import time
 from . import commands
 from .conversion import SpikeFilter, adc_to_microamps
 from .parser import SampleParser, parse_metadata
-from .transport import SerialTransport, Transport, list_ppk2_devices
+from .transport import PPK2Port, SerialTransport, Transport, list_ppk2_devices
 from .types import MeasurementResult, Modifiers, Sample
 
 logger = logging.getLogger(__name__)
@@ -54,10 +54,10 @@ class PPK2Device:
             An initialized PPK2Device (use as context manager).
         """
         if port is None:
-            ports = list_ppk2_devices()
-            if not ports:
+            devices = list_ppk2_devices()
+            if not devices:
                 raise ConnectionError("No PPK2 device found")
-            port = ports[0]
+            port = devices[0].port
             logger.info("Auto-discovered PPK2 at %s", port)
 
         transport = SerialTransport(port)
