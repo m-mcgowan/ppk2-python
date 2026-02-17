@@ -47,12 +47,14 @@ class TestDeviceConnect:
         last = reg_cmds[-1]
         assert (last[1] << 8 | last[2]) == 4200
 
-    def test_connect_sends_get_metadata_first(self):
+    def test_connect_sends_stop_then_metadata(self):
         mock = MockTransport()
         device = PPK2Device(mock)
         device._connect()
 
-        assert mock.write_log[0] == bytes([GET_METADATA])
+        # First command stops any in-progress measurement, then requests metadata
+        assert mock.write_log[0] == bytes([AVERAGE_STOP])
+        assert mock.write_log[1] == bytes([GET_METADATA])
 
 
 class TestDeviceCommands:
