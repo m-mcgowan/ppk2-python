@@ -4,12 +4,21 @@ Python library and CLI for the Nordic Power Profiler Kit II (PPK2).
 
 Features:
 - **Device control** — source/ampere meter, voltage, DUT power, 100kHz measurement
-- **File I/O** — save/load `.ppk2` files (nRF Connect Power Profiler compatible)
+- **PPK2 File I/O** — save/load `.ppk2` files (nRF Connect Power Profiler compatible)
 - **Reporting** — markdown tables, interactive HTML charts, GitHub Actions annotations
 - **Synthetic profiles** — build realistic power profiles programmatically
 - **AI integration** — generate, analyze, and validate profiles using Claude
 - **Desktop automation** — open `.ppk2` files in nRF Connect via Playwright
-- **GitHub Action** — power profiling reports in CI workflows
+- **GitHub Action** — power profiling reports in CI workflows, with interactive graphs
+
+
+Here's an example of the graphical report:
+![graphical report](image.png)
+
+The CI build produces an [example test report](https://m-mcgowan.github.io/ppk2-python/) (from mock data). The graphs are interactive. Note that these pages show both fail and pass cases, to illustrate the styling of each.
+
+NB: This library is still in active development, and hasn't yet been used in a real CI environment. That will be happening over the next few weeks.
+
 
 ## Installation
 
