@@ -101,6 +101,40 @@ class SerialTransport(Transport):
         return self._serial is not None and self._serial.is_open
 
 
+def resolve_device(
+    serial: str | None = None, port: str | None = None
+) -> PPK2Port:
+    """Find a single PPK2 device, optionally filtering by serial or port.
+
+    Raises:
+        ConnectionError: No device found, or multiple devices found
+            without a serial/port to disambiguate.
+    """
+    devices = list_ppk2_devices()
+
+    if port:
+        for d in devices:
+            if d.port == port:
+                return d
+        raise ConnectionError(f"No PPK2 device on port {port}")
+
+    if serial:
+        for d in devices:
+            if d.serial_number == serial:
+                return d
+        raise ConnectionError(f"No PPK2 device with serial {serial}")
+
+    if len(devices) == 0:
+        raise ConnectionError("No PPK2 devices found")
+    if len(devices) > 1:
+        ports = ", ".join(d.port for d in devices)
+        raise ConnectionError(
+            f"Multiple PPK2 devices found ({ports}). "
+            "Specify --port or --serial to disambiguate."
+        )
+    return devices[0]
+
+
 def list_ppk2_devices() -> list[PPK2Port]:
     """Find all connected PPK2 devices by USB VID/PID.
 

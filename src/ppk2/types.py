@@ -45,19 +45,30 @@ class MeasurementResult:
     duration_s: float = 0.0
     sample_count: int = 0
     lost_samples: int = 0
+    # Pre-computed stats (used by daemon client when raw samples aren't available)
+    _mean_ua: float | None = field(default=None, repr=False)
+    _min_ua: float | None = field(default=None, repr=False)
+    _max_ua: float | None = field(default=None, repr=False)
+    _p99_ua: float | None = field(default=None, repr=False)
 
     @property
     def mean_ua(self) -> float:
+        if self._mean_ua is not None:
+            return self._mean_ua
         values = [s.current_ua for s in self.samples if s.current_ua is not None]
         return sum(values) / len(values) if values else 0.0
 
     @property
     def min_ua(self) -> float:
+        if self._min_ua is not None:
+            return self._min_ua
         values = [s.current_ua for s in self.samples if s.current_ua is not None]
         return min(values) if values else 0.0
 
     @property
     def max_ua(self) -> float:
+        if self._max_ua is not None:
+            return self._max_ua
         values = [s.current_ua for s in self.samples if s.current_ua is not None]
         return max(values) if values else 0.0
 
@@ -67,6 +78,8 @@ class MeasurementResult:
 
     @property
     def p99_ua(self) -> float:
+        if self._p99_ua is not None:
+            return self._p99_ua
         values = sorted(
             s.current_ua for s in self.samples if s.current_ua is not None
         )
