@@ -239,7 +239,8 @@ class PPK2Device:
         # The PPK2 may still be streaming from a previous session.
         self._send(commands.average_stop())
         time.sleep(0.1)
-        self._transport.read_available()
+        while self._transport.read_available():
+            time.sleep(0.05)
 
         self._send(commands.get_metadata())
         self._metadata = self._read_metadata()
