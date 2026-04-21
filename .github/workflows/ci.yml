@@ -34,7 +34,7 @@ jobs:
 
       - name: Install package with dev dependencies
         run: |
-          python -m venv --clear .venv
+          python -m venv .venv
           source .venv/bin/activate
           pip install -e ".[dev]"
 
@@ -94,7 +94,7 @@ jobs:
 
       - name: Install package
         run: |
-          python -m venv --clear .venv
+          python -m venv .venv
           source .venv/bin/activate
           pip install -e ".[dev]"
 

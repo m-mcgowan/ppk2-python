@@ -10,7 +10,7 @@ import time
 from . import commands
 from .conversion import SpikeFilter, adc_to_microamps
 from .parser import SampleParser, parse_metadata
-from .transport import SerialTransport, Transport, list_ppk2_devices
+from .transport import PPK2Port, SerialTransport, Transport, list_ppk2_devices
 from .types import MeasurementResult, Modifiers, Sample
 
 logger = logging.getLogger(__name__)
@@ -54,10 +54,10 @@ class PPK2Device:
             An initialized PPK2Device (use as context manager).
         """
         if port is None:
-            ports = list_ppk2_devices()
-            if not ports:
+            devices = list_ppk2_devices()
+            if not devices:
                 raise ConnectionError("No PPK2 device found")
-            port = ports[0]
+            port = devices[0].port
             logger.info("Auto-discovered PPK2 at %s", port)
 
         transport = SerialTransport(port)
@@ -72,11 +72,15 @@ class PPK2Device:
         self.close()
 
     def close(self) -> None:
-        """Close the device, stopping measurement if active."""
+        """Close the serial connection.
+
+        Leaves the PPK2 in its current state (power, mode, voltage).
+        To explicitly power down the DUT before closing, call
+        ``toggle_dut_power(False)`` first.
+        """
         if self._is_measuring:
             self.stop_measuring()
         if self._transport.is_open:
-            self._send(commands.device_running_set(False))
             self._transport.close()
 
     @property
@@ -135,10 +139,52 @@ class PPK2Device:
         self._send(commands.average_stop())
         self._is_measuring = False
 
+    def read_samples(self, spike_filter: bool = True) -> list[Sample]:
+        """Read and process any available samples from the stream.
+
+        Call this in a loop after start_measuring() for non-blocking
+        sample collection. Returns an empty list if no data is available.
+
+        Args:
+            spike_filter: Apply spike filter for range-switching smoothing.
+
+        Returns:
+            List of processed samples (may be empty).
+        """
+        raw = self._transport.read_available()
+        if not raw:
+            return []
+
+        samples: list[Sample] = []
+        parsed = self._parser.feed(raw)
+        for frame in parsed:
+            if frame is None:
+                continue
+            adc_raw, range_idx, counter, logic = frame
+            current = adc_to_microamps(
+                adc_raw, range_idx, self._modifiers, self._vdd_mv
+            )
+            if spike_filter:
+                current = self._spike_filter.process(current, range_idx)
+            samples.append(Sample(
+                current_ua=current,
+                range=range_idx,
+                logic=logic,
+                counter=counter,
+            ))
+        return samples
+
     def measure(
         self, duration_s: float, spike_filter: bool = True
     ) -> MeasurementResult:
         """Take a measurement for the specified duration.
+
+        Convenience wrapper: starts measuring, collects samples for
+        ``duration_s`` seconds, stops, and returns the result.
+
+        For long-running or event-driven measurements, use
+        ``start_measuring()`` + ``read_samples()`` + ``stop_measuring()``
+        directly.
 
         Args:
             duration_s: Measurement duration in seconds.
@@ -151,34 +197,14 @@ class PPK2Device:
         time.sleep(0.05)  # let stream stabilize
 
         samples: list[Sample] = []
-        lost = 0
         deadline = time.monotonic() + duration_s
 
         while time.monotonic() < deadline:
-            raw = self._transport.read_available()
-            if not raw:
-                time.sleep(0.01)
-                continue
-
-            parsed = self._parser.feed(raw)
-            for frame in parsed:
-                if frame is None:
-                    lost += 1
-                    continue
-                adc_raw, range_idx, counter, logic = frame
-                current = adc_to_microamps(
-                    adc_raw, range_idx, self._modifiers, self._vdd_mv
-                )
-                if spike_filter:
-                    current = self._spike_filter.process(current, range_idx)
-                samples.append(
-                    Sample(
-                        current_ua=current,
-                        range=range_idx,
-                        logic=logic,
-                        counter=counter,
-                    )
-                )
+            batch = self.read_samples(spike_filter=spike_filter)
+            if not batch:
+                time.sleep(0.001)
+            else:
+                samples.extend(batch)
 
         self.stop_measuring()
 
@@ -186,7 +212,7 @@ class PPK2Device:
             samples=samples,
             duration_s=duration_s,
             sample_count=len(samples),
-            lost_samples=lost,
+            lost_samples=0,
         )
 
     def wait_for_digital(
@@ -230,6 +256,14 @@ class PPK2Device:
     def _connect(self) -> None:
         """Open transport and read device metadata."""
         self._transport.open()
+
+        # Stop any in-progress measurement and drain stale data.
+        # The PPK2 may still be streaming from a previous session.
+        self._send(commands.average_stop())
+        time.sleep(0.1)
+        while self._transport.read_available():
+            time.sleep(0.05)
+
         self._send(commands.get_metadata())
         self._metadata = self._read_metadata()
         self._modifiers.update_from_metadata(self._metadata)

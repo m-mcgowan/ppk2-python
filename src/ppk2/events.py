@@ -1,21 +1,21 @@
 """Event annotation for power profiles.
 
-Maps serial protocol events from DUT firmware to digital channels D0-D7
-in .ppk2 files. Since physical GPIOs aren't connected to the PPK2, the
-host driver captures timestamped events from the DUT serial output and
-overlays them onto the measurement samples as synthetic digital channels.
+Maps Chrome JSON trace events from DUT firmware to digital channels D0-D7
+in .ppk2 files. The host captures Chrome JSON scope events from the DUT
+serial output and overlays them onto the measurement samples as synthetic
+digital channels.
 
 Usage:
     mapper = EventMapper({
-        "GPS": 0,       # D0
-        "LTE_TX": 1,    # D1
-        "SENSOR": 2,    # D2
+        "gps": 0,          # D0
+        "lte_tx": 1,       # D1
+        "sensor": 2,       # D2
     })
 
     # During measurement, capture events from DUT serial
-    mapper.event("GPS", True, timestamp_s=0.5)    # GPS started at 0.5s
-    mapper.event("GPS", False, timestamp_s=2.0)   # GPS stopped at 2.0s
-    mapper.event("LTE_TX", True, timestamp_s=1.8)
+    mapper.event("gps", True, timestamp_s=0.5)    # gps scope began at 0.5s
+    mapper.event("gps", False, timestamp_s=2.0)   # gps scope ended at 2.0s
+    mapper.event("lte_tx", True, timestamp_s=1.8)
 
     # After measurement, apply to the sample data
     mapper.apply(result)
@@ -134,7 +134,7 @@ class EventMapper:
         """Return the channel legend as a dict.
 
         Returns:
-            {"channels": {"D0": "GPS", "D1": "LTE_TX", ...}, "events": [...]}
+            {"channels": {"D0": "gps", "D1": "lte_tx", ...}, "events": [...]}
         """
         channels = {}
         for name, ch in self.channel_map.items():
@@ -169,26 +169,20 @@ class EventMapper:
 def parse_serial_events(
     serial_output: str,
     channel_map: dict[str, int],
-    start_marker: str = "_STARTED",
-    stop_marker: str = "_STOPPED",
-    timestamp_prefix: str = "T=",
 ) -> EventMapper:
-    """Parse DUT serial output into an EventMapper.
+    """Parse DUT serial output (Chrome JSON trace lines) into an EventMapper.
 
-    Expected format (one event per line):
-        T=0.500 GPS_STARTED
-        T=1.800 LTE_TX_STARTED
-        T=2.000 GPS_STOPPED
+    Expected format (one event per line, mixed with other output):
+        {"ph":"B","ts":500000,"name":"gps","pid":1,"tid":1}
+        {"ph":"B","ts":1800000,"name":"lte_tx","pid":1,"tid":1}
+        {"ph":"E","ts":2000000,"name":"gps","pid":1,"tid":1}
 
-    The event name is derived by stripping the start/stop marker suffix.
-    For example, "GPS_STARTED" → event name "GPS", high=True.
+    The event name comes from the ``name`` field in the JSON. Only events
+    whose name appears in ``channel_map`` are recorded.
 
     Args:
         serial_output: Raw serial text from DUT.
         channel_map: Mapping of event name to D0-D7 channel number.
-        start_marker: Suffix indicating event start (default: "_STARTED").
-        stop_marker: Suffix indicating event stop (default: "_STOPPED").
-        timestamp_prefix: Prefix before the timestamp value (default: "T=").
 
     Returns:
         EventMapper with parsed events.
@@ -197,36 +191,24 @@ def parse_serial_events(
 
     for line in serial_output.strip().splitlines():
         line = line.strip()
-        if not line:
+        if not line.startswith("{"):
             continue
 
-        # Extract timestamp
-        timestamp_s = 0.0
-        parts = line.split()
-        remaining_parts = []
-
-        for part in parts:
-            if part.startswith(timestamp_prefix):
-                try:
-                    timestamp_s = float(part[len(timestamp_prefix):])
-                except ValueError:
-                    remaining_parts.append(part)
-            else:
-                remaining_parts.append(part)
-
-        if not remaining_parts:
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
             continue
 
-        token = remaining_parts[-1]  # event token is typically the last word
+        ph = obj.get("ph")
+        name = obj.get("name", "")
+        ts_us = obj.get("ts", 0)
 
-        if token.endswith(start_marker):
-            name = token[: -len(start_marker)]
-            if name in channel_map:
-                mapper.start(name, timestamp_s)
+        if name not in channel_map:
+            continue
 
-        elif token.endswith(stop_marker):
-            name = token[: -len(stop_marker)]
-            if name in channel_map:
-                mapper.stop(name, timestamp_s)
+        if ph == "B":
+            mapper.start(name, ts_us / 1_000_000)
+        elif ph == "E":
+            mapper.stop(name, ts_us / 1_000_000)
 
     return mapper

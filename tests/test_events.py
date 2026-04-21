@@ -137,19 +137,25 @@ class TestEventMapper:
 
 
 class TestParseSerialEvents:
+    def _b(self, name: str, ts_us: int) -> str:
+        return json.dumps({"ph": "B", "ts": ts_us, "name": name, "pid": 1, "tid": 1})
+
+    def _e(self, name: str, ts_us: int) -> str:
+        return json.dumps({"ph": "E", "ts": ts_us, "name": name, "pid": 1, "tid": 1})
+
     def test_basic_parsing(self):
-        serial = """
-        T=0.500 GPS_STARTED
-        T=1.800 LTE_TX_STARTED
-        T=2.000 GPS_STOPPED
-        T=3.500 LTE_TX_STOPPED
-        """
-        mapper = parse_serial_events(serial, {"GPS": 0, "LTE_TX": 1})
+        serial = "\n".join([
+            self._b("gps", 500000),
+            self._b("lte_tx", 1800000),
+            self._e("gps", 2000000),
+            self._e("lte_tx", 3500000),
+        ])
+        mapper = parse_serial_events(serial, {"gps": 0, "lte_tx": 1})
         assert len(mapper._events) == 4
 
     def test_applies_correctly(self):
-        serial = "T=0.001 GPS_STARTED\nT=0.005 GPS_STOPPED\n"
-        mapper = parse_serial_events(serial, {"GPS": 0})
+        serial = self._b("gps", 1000) + "\n" + self._e("gps", 5000) + "\n"
+        mapper = parse_serial_events(serial, {"gps": 0})
         result = _make_result(1000)
         mapper.apply(result)
 
@@ -158,23 +164,26 @@ class TestParseSerialEvents:
         assert result.samples[550].logic == 0
 
     def test_ignores_unknown_events(self):
-        serial = "T=0.001 UNKNOWN_STARTED\nT=0.002 GPS_STARTED\n"
-        mapper = parse_serial_events(serial, {"GPS": 0})
+        serial = self._b("unknown", 1000) + "\n" + self._b("gps", 2000) + "\n"
+        mapper = parse_serial_events(serial, {"gps": 0})
         assert len(mapper._events) == 1
 
     def test_ignores_blank_lines(self):
-        serial = "\n\nT=0.001 GPS_STARTED\n\n"
-        mapper = parse_serial_events(serial, {"GPS": 0})
+        serial = "\n\n" + self._b("gps", 1000) + "\n\n"
+        mapper = parse_serial_events(serial, {"gps": 0})
         assert len(mapper._events) == 1
 
-    def test_custom_markers(self):
-        serial = "T=1.0 GPS_ON\nT=2.0 GPS_OFF\n"
-        mapper = parse_serial_events(
-            serial, {"GPS": 0}, start_marker="_ON", stop_marker="_OFF"
-        )
-        assert len(mapper._events) == 2
+    def test_ignores_non_json_lines(self):
+        serial = "Starting peripheral cycle...\n" + self._b("gps", 1000) + "\n"
+        mapper = parse_serial_events(serial, {"gps": 0})
+        assert len(mapper._events) == 1
+
+    def test_ignores_counter_events(self):
+        serial = '{"ph":"C","ts":1000,"name":"heap","pid":1,"args":{"value":1024}}\n'
+        serial += self._b("gps", 2000) + "\n"
+        mapper = parse_serial_events(serial, {"gps": 0, "heap": 1})
+        assert len(mapper._events) == 1
         assert mapper._events[0].high is True
-        assert mapper._events[1].high is False
 
 
 class TestHtmlReportLegend:

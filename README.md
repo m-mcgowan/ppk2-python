@@ -4,21 +4,26 @@ Python library and CLI for the Nordic Power Profiler Kit II (PPK2).
 
 Features:
 - **Device control** — source/ampere meter, voltage, DUT power, 100kHz measurement
-- **PPK2 File I/O** — save/load `.ppk2` files (nRF Connect Power Profiler compatible)
+- **File I/O** — save/load `.ppk2` files (nRF Connect Power Profiler compatible)
 - **Reporting** — markdown tables, interactive HTML charts, GitHub Actions annotations
 - **Synthetic profiles** — build realistic power profiles programmatically
 - **AI integration** — generate, analyze, and validate profiles using Claude
 - **Desktop automation** — open `.ppk2` files in nRF Connect via Playwright
-- **GitHub Action** — power profiling reports in CI workflows, with interactive graphs
+- **GitHub Action** — power profiling reports in CI workflows
 
+## Status
 
-Here's an example of the graphical report:
-![graphical report](image.png)
-
-The CI build produces an [example test report](https://m-mcgowan.github.io/ppk2-python/) (from mock data). The graphs are interactive. Note that these pages show both fail and pass cases, to illustrate the styling of each.
-
-NB: This library is still in active development, and hasn't yet been used in a real CI environment. That will be happening over the next few weeks.
-
+| Feature | Design | Docs | Impl | Tests | Examples | Since | Updated |
+|---------|--------|------|------|-------|----------|-------|---------|
+| **Device control** | | | [device.py](src/ppk2/device.py), [transport.py](src/ppk2/transport.py) | [test_device](tests/test_device.py), [test_integration](tests/test_integration.py) | | | |
+| **File I/O** | | | [ppk2file.py](src/ppk2/ppk2file.py), [conversion.py](src/ppk2/conversion.py), [parser.py](src/ppk2/parser.py) | [test_ppk2file](tests/test_ppk2file.py), [test_parser](tests/test_parser.py), [test_conversion](tests/test_conversion.py) | | | |
+| **Reporting** | | | [report.py](src/ppk2/report.py) | [test_report](tests/test_report.py) | | | |
+| **Synthetic profiles** | | | [synthetic.py](src/ppk2/synthetic.py) | [test_synthetic](tests/test_synthetic.py) | | | |
+| **AI integration** | | | [ai.py](src/ppk2/ai.py) | [test_ai](tests/test_ai.py) | | | |
+| **CLI** | | | [cli.py](src/ppk2/cli.py), [commands.py](src/ppk2/commands.py) | [test_commands](tests/test_commands.py) | | | |
+| **Daemon server** | | | [daemon.py](src/ppk2/daemon.py), [client.py](src/ppk2/client.py) | [test_daemon](tests/test_daemon.py) | | | |
+| **Desktop automation** | | | [desktop.py](src/ppk2/desktop.py) | | | | |
+| **GitHub Action** | | | [action.yml](action.yml), [action_report.py](action_report.py) | | | | |
 
 ## Installation
 

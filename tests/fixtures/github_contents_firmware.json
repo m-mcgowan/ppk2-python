@@ -1,0 +1,10 @@
+[
+  {
+    "name": "pca63100_ppk2_1.2.4_db16a94.hex",
+    "path": "firmware/pca63100_ppk2_1.2.4_db16a94.hex",
+    "sha": "abc123",
+    "size": 245760,
+    "type": "file",
+    "download_url": "https://raw.githubusercontent.com/NordicSemiconductor/pc-nrfconnect-ppk/main/firmware/pca63100_ppk2_1.2.4_db16a94.hex"
+  }
+]
