@@ -118,10 +118,10 @@ def query(
 
 def _tool_install_hint() -> str:
     return (
-        "nrfutil (with the 'device' subcommand) is required for firmware "
-        "operations. Install with:\n"
+        "nrfutil (with the 'device' and 'nrf5sdk-tools' subcommands) is "
+        "required for firmware operations. Install with:\n"
         "    brew install --cask nrfutil\n"
-        "    nrfutil install device\n"
+        "    nrfutil install device nrf5sdk-tools\n"
         "See https://www.nordicsemi.com/Products/Development-tools/nrf-util"
     )
 
@@ -263,19 +263,65 @@ def _pid_path_exists_and_alive(serial_number: str) -> bool:
     return daemon.pid_alive(pid)
 
 
+def _package_hex_as_dfu_zip(hex_path: Path, *, timeout: float = 60.0) -> Path:
+    """Wrap an IntelHex firmware file into an unsigned SDFU zip via
+    `nrfutil nrf5sdk-tools pkg generate --debug-mode`.
+
+    This matches what the nRF Connect Power Profiler app does at runtime
+    when it programs a PPK2 from the bundled hex. The PPK2's open bootloader
+    accepts unsigned packages (debug mode).
+
+    Returns the path to the generated .zip in a temp dir.
+    """
+    out_dir = Path(tempfile.mkdtemp(prefix="ppk2-dfu-"))
+    zip_path = out_dir / (hex_path.stem + ".zip")
+    cmd = [
+        "nrfutil", "nrf5sdk-tools", "pkg", "generate",
+        "--debug-mode",
+        "--application", str(hex_path),
+        "--application-version", "4",
+        "--hw-version", "52",
+        "--sd-req", "0x00",
+        str(zip_path),
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+        )
+    except FileNotFoundError as e:
+        raise FirmwareToolMissing(_tool_install_hint()) from e
+
+    if result.returncode != 0:
+        stderr_lower = (result.stderr or "").lower()
+        if "not found" in stderr_lower and (
+            "nrf5sdk-tools" in stderr_lower or "subcommand" in stderr_lower
+        ):
+            raise FirmwareToolMissing(_tool_install_hint())
+        raise FirmwareUpgradeError(
+            f"nrfutil pkg generate exited {result.returncode}: "
+            f"{result.stderr.strip()}"
+        )
+    return zip_path
+
+
 def upgrade(
     serial_number: str,
     hex_path: Path,
     *,
     timeout: float = 180.0,
 ) -> FirmwareInfo:
-    """Flash hex_path onto the PPK2 with the given serial via
-    `nrfutil device program`, then query and return the new FirmwareInfo.
+    """Flash hex_path onto the PPK2 with the given serial.
+
+    The hex is wrapped into an unsigned SDFU zip via
+    `nrfutil nrf5sdk-tools pkg generate --debug-mode` (matching what the
+    nRF Connect Power Profiler app does), then programmed via
+    `nrfutil device program`. After flashing, queries the device and
+    returns the new FirmwareInfo.
 
     Raises:
         FirmwareUpgradeError: if a daemon is running for this serial,
             if nrfutil fails, or if post-flash verification fails.
-        FirmwareToolMissing: if nrfutil is not installed.
+        FirmwareToolMissing: if nrfutil or a required subcommand is missing.
     """
     if _pid_path_exists_and_alive(serial_number):
         raise FirmwareUpgradeError(
@@ -287,9 +333,11 @@ def upgrade(
     if not hex_path.is_file():
         raise FirmwareUpgradeError(f"hex file not found: {hex_path}")
 
+    zip_path = _package_hex_as_dfu_zip(hex_path)
+
     cmd = [
         "nrfutil", "device", "program",
-        "--firmware", str(hex_path),
+        "--firmware", str(zip_path),
         "--serial-number", serial_number,
         "--traits", "nordicUsb",
         "--options", "reset=RESET_SYSTEM",

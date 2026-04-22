@@ -263,7 +263,10 @@ class TestUpgrade:
             raw={},
         )
 
-    def test_happy_path(self, tmp_path):
+    def test_happy_path_packages_hex_then_programs_zip(self, tmp_path):
+        """Upgrade must wrap the .hex into a SDFU zip (pkg generate) before
+        calling `nrfutil device program`, because nordicUsb devices reject
+        raw hex with 'invalid Zip archive: Could not find EOCD'."""
         hex_path = tmp_path / "fw.hex"
         hex_path.write_bytes(b":00000001FF\n")
 
@@ -281,12 +284,30 @@ class TestUpgrade:
             info = firmware.upgrade("SN", hex_path)
 
         assert info.application_version == 20300
-        args = mock_run.call_args.args[0]
-        assert args[:3] == ["nrfutil", "device", "program"]
-        assert "--firmware" in args
-        assert str(hex_path) in args
-        assert "--serial-number" in args and "SN" in args
-        assert "--traits" in args and "nordicUsb" in args
+
+        # Two subprocess calls in order: pkg generate, then device program.
+        assert mock_run.call_count == 2
+        first_args = mock_run.call_args_list[0].args[0]
+        second_args = mock_run.call_args_list[1].args[0]
+
+        # Call 1: nrfutil nrf5sdk-tools pkg generate ... --application <hex>
+        assert first_args[:4] == ["nrfutil", "nrf5sdk-tools", "pkg", "generate"]
+        assert "--debug-mode" in first_args
+        assert "--application" in first_args
+        assert str(hex_path) in first_args
+        assert "--hw-version" in first_args
+        assert "52" in first_args
+        assert "--sd-req" in first_args
+
+        # Call 2: nrfutil device program --firmware <zip> ...
+        assert second_args[:3] == ["nrfutil", "device", "program"]
+        firmware_idx = second_args.index("--firmware")
+        zip_path = second_args[firmware_idx + 1]
+        assert zip_path.endswith(".zip"), f"expected zip path, got {zip_path}"
+        assert str(hex_path) not in second_args  # the hex itself must not be passed here
+        assert "--serial-number" in second_args and "SN" in second_args
+        assert "--traits" in second_args and "nordicUsb" in second_args
+
         mock_query.assert_called_once_with(serial_number="SN")
 
     def test_daemon_running_refuses(self, tmp_path):

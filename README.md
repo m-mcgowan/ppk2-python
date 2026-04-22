@@ -10,6 +10,7 @@ Features:
 - **AI integration** — generate, analyze, and validate profiles using Claude
 - **Desktop automation** — open `.ppk2` files in nRF Connect via Playwright
 - **GitHub Action** — power profiling reports in CI workflows
+- **Firmware management** — query, check against upstream, and flash PPK2 firmware over USB (remote-friendly alternative to the nRF Connect GUI)
 
 ## Status
 
@@ -34,6 +35,35 @@ pip install ppk2-python[desktop]     # + Playwright for nRF Connect automation
 pip install ppk2-python[ai]          # + Anthropic SDK for Claude integration
 pip install ppk2-python[all]         # everything
 ```
+
+### Optional: `nrfutil` (for `ppk2 firmware` commands)
+
+Querying or flashing PPK2 firmware requires Nordic's `nrfutil` with the
+`device` and `nrf5sdk-tools` subcommands. On macOS:
+
+```bash
+brew install --cask nrfutil
+nrfutil install device nrf5sdk-tools
+```
+
+On Linux, download `nrfutil` from
+<https://www.nordicsemi.com/Products/Development-tools/nrf-util> and run
+`nrfutil install device nrf5sdk-tools`. The rest of the library works
+without `nrfutil`.
+
+### `ppk2 firmware` usage
+
+```bash
+ppk2 firmware                          # show running firmware version
+ppk2 firmware check                    # compare against the latest upstream release
+ppk2 firmware upgrade --yes            # download latest from nRF Connect repo and flash
+ppk2 firmware upgrade --hex fw.hex     # flash a user-supplied hex
+```
+
+The upgrade path downloads the hex from the nRF Connect Power Profiler
+GitHub repo, wraps it into an unsigned SDFU zip (matching what the GUI
+app does), and programs it via the PPK2's USB DFU bootloader. Stop any
+running `ppk2` daemon for that device before upgrading.
 
 ## Quick Start
 
