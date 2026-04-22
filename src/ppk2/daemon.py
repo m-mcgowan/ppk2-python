@@ -308,6 +308,12 @@ class DaemonServer:
                 self._stream_raw = raw
                 self._spike_filter.reset()
                 self._parser.reset()
+                try:
+                    conn.setsockopt(
+                        socket.SOL_SOCKET, socket.SO_SNDBUF, 1 << 20,
+                    )
+                except OSError:
+                    pass
                 # Drain any stale serial data before starting measurement
                 while self._transport.read_available():
                     pass
