@@ -19,6 +19,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
+import serial
+
+# Nordic Open DFU Bootloader (VID stays 0x1915, PID changes in bootloader mode).
+PPK2_DFU_PID = 0x521F
+
+# SLIP-encoded Nordic DFU ABORT (op code 0x0C) — tells the bootloader to
+# stop waiting for DFU activity and restart, exiting to the application slot
+# if one is valid.
+_SLIP_ABORT = b"\xc0\x0c\xc0"
+
 GITHUB_CONTENTS_URL = (
     "https://api.github.com/repos/NordicSemiconductor/pc-nrfconnect-ppk/"
     "contents/firmware"
@@ -249,6 +259,55 @@ def download_upstream(
 
     dest_path.write_bytes(data)
     return dest_path, upstream
+
+
+def _resolve_dfu_port(serial_number: str) -> str | None:
+    """Return the /dev path for a PPK2 currently in DFU bootloader mode.
+
+    Filters pyserial's list_ports by (Nordic VID, DFU PID, matching serial).
+    Returns None if no matching port is found (device is in app mode,
+    disconnected, or the serial number is wrong).
+    """
+    import serial.tools.list_ports
+    from .transport import NORDIC_VID
+
+    for p in serial.tools.list_ports.comports():
+        if p.vid != NORDIC_VID or p.pid != PPK2_DFU_PID:
+            continue
+        sn = (p.serial_number or "")[:12]
+        if sn == serial_number[:12]:
+            return p.device
+    return None
+
+
+def is_in_dfu_mode(serial_number: str) -> bool:
+    """True if the PPK2 with this serial currently enumerates as the
+    Nordic Open DFU Bootloader (PID 0x521F) rather than the app (PID 0xC00A).
+    """
+    return _resolve_dfu_port(serial_number) is not None
+
+
+def abort_dfu(serial_number: str, *, timeout: float = 2.0) -> None:
+    """Tell a PPK2 stuck in DFU bootloader to abort and boot the application.
+
+    Sends the 3-byte SLIP ABORT sequence (0xC0 0x0C 0xC0) to the device's
+    DFU serial port. The bootloader exits to the installed application
+    (if one is valid). Matches the recovery path surfaced in
+    ``docs/dx_notes.md``.
+
+    Raises FirmwareUpgradeError if no DFU-mode port is found for this
+    serial (device is in app mode or disconnected).
+    """
+    port = _resolve_dfu_port(serial_number)
+    if port is None:
+        raise FirmwareUpgradeError(
+            f"no DFU-mode PPK2 found for serial {serial_number} — "
+            "the device is already in app mode or is not connected"
+        )
+
+    with serial.Serial(port, 115200, timeout=timeout) as s:
+        s.write(_SLIP_ABORT)
+        s.flush()
 
 
 def _pid_path_exists_and_alive(serial_number: str) -> bool:

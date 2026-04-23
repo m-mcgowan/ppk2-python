@@ -359,6 +359,14 @@ def cmd_firmware_check(args: argparse.Namespace) -> int:
 
     up_to_date = info.application_version == firmware.CURRENT_APPLICATION_VERSION
 
+    in_dfu = False
+    try:
+        in_dfu = firmware.is_in_dfu_mode(info.serial_number)
+    except Exception:
+        # DFU detection is best-effort — e.g., pyserial edge cases on exotic
+        # platforms. Never let it break the main check flow.
+        pass
+
     if getattr(args, "json", False):
         import json as _json
         payload = {
@@ -367,6 +375,7 @@ def cmd_firmware_check(args: argparse.Namespace) -> int:
                 "bootloader_type": info.bootloader_type,
                 "bootloader_version": info.bootloader_version,
                 "application_version": info.application_version,
+                "in_dfu_mode": in_dfu,
             },
             "upstream": (
                 None if upstream is None
@@ -402,6 +411,14 @@ def cmd_firmware_check(args: argparse.Namespace) -> int:
             pass
         else:
             print("Status: outdated")
+        if in_dfu:
+            print()
+            print(
+                "Warning: device is currently in the Open DFU Bootloader "
+                "(not the application). Measurement commands will return "
+                "garbage until the bootloader exits. Run:"
+            )
+            print(f"  ppk2 firmware abort-dfu --serial {info.serial_number}")
 
     if upstream is None:
         return 1
@@ -479,6 +496,27 @@ def cmd_firmware_upgrade(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_firmware_abort_dfu(args: argparse.Namespace) -> int:
+    """Tell a PPK2 stuck in DFU bootloader to boot the application."""
+    serial = _resolve_serial(args)
+    if serial is None:
+        from .transport import resolve_device
+        try:
+            serial = resolve_device().serial_number
+        except ConnectionError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+
+    try:
+        firmware.abort_dfu(serial)
+    except firmware.FirmwareUpgradeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+
+    print(f"Sent DFU ABORT to PPK2 {serial}; device should reboot into app mode.")
+    return 0
+
+
 def _cmd_firmware_dispatch(args: argparse.Namespace) -> int:
     action = getattr(args, "firmware_action", None) or "info"
     if action == "info":
@@ -487,6 +525,8 @@ def _cmd_firmware_dispatch(args: argparse.Namespace) -> int:
         return cmd_firmware_check(args)
     if action == "upgrade":
         return cmd_firmware_upgrade(args)
+    if action == "abort-dfu":
+        return cmd_firmware_abort_dfu(args)
     raise SystemExit(f"Unknown firmware action: {action}")
 
 
@@ -604,6 +644,11 @@ def main() -> int:
                               help="Download latest upstream firmware")
     p_fw_upgrade.add_argument("--yes", action="store_true",
                               help="Skip confirmation prompt")
+    firmware_sub.add_parser(
+        "abort-dfu",
+        help="Tell a PPK2 stuck in DFU bootloader to boot the application",
+        parents=[fw_common],
+    )
 
     args = parser.parse_args()
     if not args.command:

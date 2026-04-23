@@ -352,6 +352,59 @@ class TestUpgrade:
             else:
                 raise AssertionError("expected FirmwareUpgradeError")
 
+    def test_abort_dfu_writes_slip_sequence(self):
+        """abort_dfu opens the DFU port for the target serial and writes the
+        3-byte SLIP ABORT sequence (0xC0 0x0C 0xC0), then closes.
+        """
+        written = bytearray()
+
+        class _FakeSerial:
+            def __init__(self, *args, **kwargs):
+                self._opened_args = (args, kwargs)
+
+            def write(self, data):
+                written.extend(data)
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.close()
+                return False
+
+        fake_port = "/dev/tty.usbmodemXXXXXX1"
+        with patch(
+            "ppk2.firmware._resolve_dfu_port", return_value=fake_port
+        ) as mock_resolve, patch(
+            "ppk2.firmware.serial.Serial", _FakeSerial
+        ):
+            firmware.abort_dfu("SN")
+
+        mock_resolve.assert_called_once_with("SN")
+        assert bytes(written) == b"\xc0\x0c\xc0", (
+            f"expected SLIP ABORT bytes, got {bytes(written)!r}"
+        )
+
+    def test_abort_dfu_raises_when_no_dfu_port(self):
+        """If the serial has no DFU-mode port (device is in app mode or
+        not connected), abort_dfu raises FirmwareUpgradeError.
+        """
+        with patch(
+            "ppk2.firmware._resolve_dfu_port", return_value=None
+        ):
+            try:
+                firmware.abort_dfu("SN")
+            except firmware.FirmwareUpgradeError as e:
+                assert "dfu" in str(e).lower()
+            else:
+                raise AssertionError("expected FirmwareUpgradeError")
+
     def test_post_flash_verify_fails_raises(self, tmp_path):
         hex_path = tmp_path / "fw.hex"
         hex_path.write_bytes(b":00000001FF\n")

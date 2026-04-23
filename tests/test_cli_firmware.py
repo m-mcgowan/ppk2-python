@@ -260,3 +260,72 @@ class TestFirmwareUpgradeCli:
         err = capsys.readouterr().err
         assert rc == 2
         assert "daemon" in err.lower()
+
+
+class TestFirmwareAbortDfuCli:
+    def test_success(self, capsys):
+        with patch(
+            "ppk2.cli.firmware.abort_dfu", return_value=None
+        ) as mock_abort, patch.object(
+            sys, "argv",
+            ["ppk2", "firmware", "abort-dfu", "--serial", "SN"],
+        ):
+            rc = cli.main()
+        assert rc == 0
+        mock_abort.assert_called_once_with("SN")
+        out = capsys.readouterr().out
+        assert "SN" in out
+        assert "app" in out.lower() or "abort" in out.lower()
+
+    def test_not_in_dfu(self, capsys):
+        with patch(
+            "ppk2.cli.firmware.abort_dfu",
+            side_effect=firmware.FirmwareUpgradeError(
+                "no DFU-mode PPK2 found for serial SN — already in app mode"
+            ),
+        ), patch.object(
+            sys, "argv",
+            ["ppk2", "firmware", "abort-dfu", "--serial", "SN"],
+        ):
+            rc = cli.main()
+        err = capsys.readouterr().err
+        assert rc == 2
+        assert "dfu" in err.lower() or "app mode" in err.lower()
+
+
+class TestFirmwareCheckDfuDetection:
+    """check should warn when the device is in DFU mode so the user sees a
+    remediation hint (run `ppk2 firmware abort-dfu`).
+    """
+
+    def test_check_warns_on_dfu_mode(self, capsys):
+        with patch(
+            "ppk2.cli.firmware.query",
+            return_value=_info(app=firmware.CURRENT_APPLICATION_VERSION),
+        ), patch(
+            "ppk2.cli.firmware.fetch_upstream", return_value=_upstream()
+        ), patch(
+            "ppk2.cli.firmware.is_in_dfu_mode", return_value=True
+        ), patch.object(sys, "argv", ["ppk2", "firmware", "check",
+                                      "--serial", "E2794420999B"]):
+            rc = cli.main()
+        out = capsys.readouterr().out
+        # Still exits 0 (firmware version matches), but surfaces the DFU hint.
+        assert rc == 0
+        assert "dfu" in out.lower()
+        assert "abort-dfu" in out.lower()
+
+    def test_check_no_dfu_warning_when_app_mode(self, capsys):
+        with patch(
+            "ppk2.cli.firmware.query",
+            return_value=_info(app=firmware.CURRENT_APPLICATION_VERSION),
+        ), patch(
+            "ppk2.cli.firmware.fetch_upstream", return_value=_upstream()
+        ), patch(
+            "ppk2.cli.firmware.is_in_dfu_mode", return_value=False
+        ), patch.object(sys, "argv", ["ppk2", "firmware", "check",
+                                      "--serial", "E2794420999B"]):
+            rc = cli.main()
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "dfu" not in out.lower()
