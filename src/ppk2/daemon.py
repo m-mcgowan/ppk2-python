@@ -485,7 +485,14 @@ class DaemonServer:
 
     def _send_response(self, conn: socket.socket, resp: dict) -> None:
         data = json.dumps(resp).encode() + b"\n"
-        conn.sendall(data)
+        try:
+            conn.sendall(data)
+        except (BrokenPipeError, ConnectionResetError) as e:
+            # Client closed the socket before reading the ack (common after
+            # measure_stop followed by an immediate close). Nothing to do
+            # on our side — just note it at DEBUG so it doesn't clutter
+            # the daemon log.
+            logger.debug("Client closed socket before ack read: %s", e)
 
     def _handle_signal(self, signum: int, frame) -> None:
         logger.info("Received signal %d, shutting down", signum)

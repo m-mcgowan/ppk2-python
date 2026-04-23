@@ -165,6 +165,47 @@ class TestDeviceState:
 # --- Protocol tests (raw socket) ---
 
 
+class TestDaemonSendResponseTolerance:
+    """_send_response must not noisily crash when the client has already
+    closed the socket (a common race for e.g. `stop_measuring` followed
+    by an immediate `client.close()`).
+    """
+
+    def test_send_response_swallows_broken_pipe(self, caplog):
+        """BrokenPipeError on sendall should be demoted, not logged at ERROR."""
+        import logging
+        from unittest.mock import MagicMock
+
+        server = DaemonServer(PPK2Port(port="/dev/TEST", serial_number="T", location=""))
+        conn = MagicMock()
+        conn.sendall.side_effect = BrokenPipeError("client went away")
+
+        with caplog.at_level(logging.DEBUG, logger="ppk2.daemon"):
+            # Must not raise.
+            server._send_response(conn, {"ok": True})
+
+        # Should not have produced any ERROR-level records.
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not errors, (
+            f"BrokenPipeError should be demoted, got ERROR records: "
+            f"{[r.getMessage() for r in errors]}"
+        )
+
+    def test_send_response_swallows_connection_reset(self, caplog):
+        import logging
+        from unittest.mock import MagicMock
+
+        server = DaemonServer(PPK2Port(port="/dev/TEST", serial_number="T", location=""))
+        conn = MagicMock()
+        conn.sendall.side_effect = ConnectionResetError("reset")
+
+        with caplog.at_level(logging.DEBUG, logger="ppk2.daemon"):
+            server._send_response(conn, {"ok": True})
+
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not errors
+
+
 class TestDaemonProtocol:
     def test_status_command(self, harness):
         h, sock_path = harness
