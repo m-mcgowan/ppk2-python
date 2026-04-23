@@ -26,10 +26,13 @@ Usage:
 """
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .types import MeasurementResult
+
+logger = logging.getLogger(__name__)
 
 SAMPLES_PER_SECOND = 100_000
 
@@ -105,13 +108,35 @@ class EventMapper:
         # Sort events by timestamp
         sorted_events = sorted(self._events, key=lambda e: e.timestamp_s)
 
-        # Build a timeline of bitmask changes
-        # Each entry: (sample_index, bit_to_set, high/low)
+        # Build a timeline of bitmask changes. Events whose timestamp falls
+        # outside the capture window are clamped to the first or last sample;
+        # this silently produces plausible-looking-but-wrong legends when the
+        # caller forgets to align device-time to capture-time, so emit a
+        # warning the first time it happens (and count the rest).
+        capture_duration_s = len(result.samples) / samples_per_second
         transitions: list[tuple[int, int, bool]] = []
+        n_out_of_range = 0
+        first_out_of_range: _Event | None = None
         for ev in sorted_events:
             idx = int(ev.timestamp_s * samples_per_second)
+            if idx < 0 or idx >= len(result.samples):
+                if first_out_of_range is None:
+                    first_out_of_range = ev
+                n_out_of_range += 1
             idx = max(0, min(idx, len(result.samples) - 1))
             transitions.append((idx, ev.channel_bit, ev.high))
+
+        if first_out_of_range is not None:
+            logger.warning(
+                "%d event(s) outside capture window [0, %.3fs]; first was "
+                "'%s' at ts=%.3fs — likely a time-alignment issue (device "
+                "boot-time vs capture-start-time). Events have been clamped "
+                "to the nearest sample.",
+                n_out_of_range,
+                capture_duration_s,
+                first_out_of_range.channel_name,
+                first_out_of_range.timestamp_s,
+            )
 
         # Apply transitions to samples
         # Start with existing logic state from first sample

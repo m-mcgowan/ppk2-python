@@ -135,6 +135,53 @@ class TestEventMapper:
         mapper.apply(result)
         assert all(s.logic == 0 for s in result.samples)
 
+    def test_warns_when_event_past_end_is_clamped(self, caplog):
+        """Events after the capture window are silently clamped to the last
+        sample today, which produces plausible-looking but wrong legends.
+        apply() should at least log a warning so the user notices.
+        """
+        import logging
+        mapper = EventMapper({"GPS": 0})
+        result = _make_result(1000)   # 0.01 s window at 100 kHz
+        mapper.start("GPS", 100.0)    # way outside the window
+
+        with caplog.at_level(logging.WARNING, logger="ppk2.events"):
+            mapper.apply(result)
+
+        assert any(
+            "GPS" in r.getMessage() and "100.0" in r.getMessage()
+            for r in caplog.records
+        ), f"expected a warning about clamped event; got: {[r.getMessage() for r in caplog.records]}"
+
+    def test_warns_when_event_before_start_is_clamped(self, caplog):
+        import logging
+        mapper = EventMapper({"GPS": 0})
+        result = _make_result(1000)
+        mapper.start("GPS", -5.0)     # negative → clamps to 0
+
+        with caplog.at_level(logging.WARNING, logger="ppk2.events"):
+            mapper.apply(result)
+
+        assert any(
+            "GPS" in r.getMessage() and "-5" in r.getMessage()
+            for r in caplog.records
+        ), f"expected a warning about clamped event; got: {[r.getMessage() for r in caplog.records]}"
+
+    def test_in_range_events_do_not_warn(self, caplog):
+        import logging
+        mapper = EventMapper({"GPS": 0})
+        result = _make_result(1000)
+        mapper.start("GPS", 0.002)
+        mapper.stop("GPS", 0.005)
+
+        with caplog.at_level(logging.WARNING, logger="ppk2.events"):
+            mapper.apply(result)
+
+        assert not caplog.records, (
+            f"did not expect any warnings for in-range events; "
+            f"got: {[r.getMessage() for r in caplog.records]}"
+        )
+
 
 class TestParseSerialEvents:
     def _b(self, name: str, ts_us: int) -> str:
