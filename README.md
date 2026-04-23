@@ -23,6 +23,8 @@ Features:
 | **AI integration** | | | [ai.py](src/ppk2/ai.py) | [test_ai](tests/test_ai.py) | | | |
 | **CLI** | | | [cli.py](src/ppk2/cli.py), [commands.py](src/ppk2/commands.py) | [test_commands](tests/test_commands.py) | | | |
 | **Daemon server** | | | [daemon.py](src/ppk2/daemon.py), [client.py](src/ppk2/client.py) | [test_daemon](tests/test_daemon.py) | | | |
+| **Event annotation** | | | [events.py](src/ppk2/events.py), [merge.py](src/ppk2/merge.py) | [test_events](tests/test_events.py), [test_merge](tests/test_merge.py) | [capture_with_events](examples/capture_with_events.py) | | |
+| **Firmware management** | | | [firmware.py](src/ppk2/firmware.py) | [test_firmware](tests/test_firmware.py), [test_cli_firmware](tests/test_cli_firmware.py) | | | |
 | **Desktop automation** | | | [desktop.py](src/ppk2/desktop.py) | | | | |
 | **GitHub Action** | | | [action.yml](action.yml), [action_report.py](action_report.py) | | | | |
 
@@ -107,6 +109,29 @@ profile = (
 )
 save_ppk2(profile, "synthetic.ppk2")
 ```
+
+### Annotate a capture with DUT trace events
+
+If your firmware emits Chrome JSON scope events over a serial link
+(`{"ph":"B"/"E","ts":...,"name":"..."}`), overlay them as D0–D7 logic
+channels on the PPK2 capture:
+
+```python
+from ppk2.events import parse_serial_events
+from ppk2.ppk2file import save_ppk2
+
+mapper = parse_serial_events(dut_serial_output, {"gps": 0, "radio": 1})
+mapper.apply(measurement)          # adds logic bits to each sample
+save_ppk2(measurement, "annotated.ppk2")
+mapper.save_legend("annotated.ppk2.legend.json")
+```
+
+Events with timestamps outside the capture window are clamped and a
+warning is logged — if you see that warning, your device-clock and
+capture-start aren't aligned yet. See
+[`examples/capture_with_events.py`](examples/capture_with_events.py) for
+a runnable walkthrough including the daemon-client/serial-reader pattern
+for real hardware.
 
 ## CLI
 
