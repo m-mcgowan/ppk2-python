@@ -430,6 +430,25 @@ class TestDaemonStreaming:
             for r in caplog.records
         ), f"unexpected DUT-power warning: {[r.getMessage() for r in caplog.records]}"
 
+    def test_start_measuring_no_warning_in_ampere_mode(self, harness, caplog):
+        """In ampere-meter mode the DUT is powered by an external supply;
+        the PPK2's `dut_power` flag is meaningless. Don't warn just because
+        dut_power is False.
+        """
+        import logging
+        h, sock_path = harness
+        client = h.client(sock_path)
+        client.use_ampere_meter()                 # mode = "ampere"
+        # Deliberately leave dut_power = False.
+        with caplog.at_level(logging.WARNING, logger="ppk2.client"):
+            client.start_measuring()
+        client.stop_measuring()
+
+        assert not any(
+            "dut power" in r.getMessage().lower()
+            for r in caplog.records
+        ), f"unexpected DUT-power warning in ampere mode: {[r.getMessage() for r in caplog.records]}"
+
     def test_read_samples_returns_sample_objects(self, harness):
         """read_samples() returns Sample objects (API parity with PPK2Device)."""
         from ppk2.types import Sample

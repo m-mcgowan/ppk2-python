@@ -125,10 +125,14 @@ class DaemonClient:
         if self._stream_sock is not None:
             raise RuntimeError("Already streaming")
 
-        # Warn if DUT power is off — otherwise the capture will show ~0 µA
-        # and callers often don't notice until they look at the numbers.
+        # Warn if we're in source-meter mode with DUT power off — otherwise
+        # the capture will show ~0 µA and callers often don't notice until
+        # they look at the numbers. In ampere-meter mode the DUT is powered
+        # externally, so `dut_power` is irrelevant and we stay quiet.
         try:
-            if not self.status().get("dut_power", False):
+            state = self.status()
+            if (state.get("mode") == "source"
+                    and not state.get("dut_power", False)):
                 logger.warning(
                     "DUT power is OFF — this capture will read ~0 µA. "
                     "Call client.toggle_dut_power(True) before "
