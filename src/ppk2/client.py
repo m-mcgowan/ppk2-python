@@ -5,6 +5,7 @@ work transparently whether talking to a daemon or directly to hardware.
 """
 
 import json
+import logging
 import socket
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from .daemon import find_daemon, list_daemons, state_dir
 from .parser import SampleParser
 from .transport import resolve_device
 from .types import MeasurementResult, Modifiers, Sample
+
+logger = logging.getLogger(__name__)
 
 _BUF_SIZE = 65536
 _RECV_TIMEOUT = 30.0
@@ -121,6 +124,20 @@ class DaemonClient:
         """
         if self._stream_sock is not None:
             raise RuntimeError("Already streaming")
+
+        # Warn if DUT power is off — otherwise the capture will show ~0 µA
+        # and callers often don't notice until they look at the numbers.
+        try:
+            if not self.status().get("dut_power", False):
+                logger.warning(
+                    "DUT power is OFF — this capture will read ~0 µA. "
+                    "Call client.toggle_dut_power(True) before "
+                    "start_measuring() if you want the DUT running."
+                )
+        except Exception:
+            # Never block a measurement on a status probe failing.
+            pass
+
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(_RECV_TIMEOUT)
         sock.connect(str(self._socket_path))
