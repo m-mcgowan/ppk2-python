@@ -471,6 +471,62 @@ class TestDaemonStreaming:
             for r in caplog.records
         ), f"unexpected DUT-power warning: {[r.getMessage() for r in caplog.records]}"
 
+    def test_start_measuring_registers_atexit_stop(self, harness):
+        """If a process running a streaming client is killed uncleanly
+        (segfault, kill -9 of parent shell, uncaught exception), the daemon
+        is left with the PPK2 in streaming mode and no consumer draining
+        the socket — causing subsequent runs to see sample loss, stale
+        "already measuring" errors, or a PPK2 that has to be physically
+        unplugged. Register an atexit hook in start_measuring that calls
+        stop_measuring so the library handles this for every consumer.
+        """
+        from unittest.mock import patch
+
+        h, sock_path = harness
+        client = h.client(sock_path)
+
+        with patch("ppk2.client.atexit.register") as mock_reg:
+            client.start_measuring()
+        try:
+            mock_reg.assert_called_once()
+            # The registered callable should be bound to this client's
+            # stop_measuring (or a wrapper around it).
+            fn = mock_reg.call_args.args[0]
+            assert callable(fn)
+        finally:
+            client.stop_measuring()
+
+    def test_stop_measuring_unregisters_atexit_stop(self, harness):
+        """After a graceful stop, the atexit hook is no longer needed — it
+        should be unregistered so a later reconnect or process exit doesn't
+        double-send stop_measuring.
+        """
+        from unittest.mock import patch
+
+        h, sock_path = harness
+        client = h.client(sock_path)
+
+        with patch("ppk2.client.atexit.register") as mock_reg, \
+             patch("ppk2.client.atexit.unregister") as mock_unreg:
+            client.start_measuring()
+            registered_fn = mock_reg.call_args.args[0]
+            client.stop_measuring()
+
+        mock_unreg.assert_called_once_with(registered_fn)
+
+    def test_atexit_hook_is_safe_to_call_twice(self, harness):
+        """If the atexit hook fires and the client was already stopped
+        manually, it must not raise — atexit callbacks that raise surface
+        as noise on interpreter shutdown.
+        """
+        h, sock_path = harness
+        client = h.client(sock_path)
+        client.start_measuring()
+        client.stop_measuring()
+        # Simulate atexit firing after an explicit stop: calling the
+        # internal stop again must not raise.
+        client._atexit_stop()       # must exist and be idempotent
+
     def test_start_measuring_no_warning_in_ampere_mode(self, harness, caplog):
         """In ampere-meter mode the DUT is powered by an external supply;
         the PPK2's `dut_power` flag is meaningless. Don't warn just because

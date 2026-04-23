@@ -4,6 +4,7 @@ Provides the same public interface as ``PPK2Device`` so that CLI commands
 work transparently whether talking to a daemon or directly to hardware.
 """
 
+import atexit
 import json
 import logging
 import socket
@@ -186,10 +187,31 @@ class DaemonClient:
         # Feed any leftover bytes that arrived after the ack line
         self._leftover = leftover
 
+        # Belt-and-braces: if the consumer process exits without calling
+        # stop_measuring (kill -9, uncaught exception, parent shell exit),
+        # the daemon would be left streaming into a closed socket with the
+        # PPK2 still in averaging mode. Register an atexit hook so the
+        # library does the right thing even when the consumer forgets.
+        atexit.register(self._atexit_stop)
+
+    def _atexit_stop(self) -> None:
+        """Safety-net variant of stop_measuring for atexit.
+
+        Idempotent and never raises — atexit callbacks that raise surface
+        as noise on interpreter shutdown.
+        """
+        try:
+            if self._stream_sock is not None:
+                self.stop_measuring()
+        except Exception:
+            pass
+
     def stop_measuring(self) -> None:
         """Stop streaming measurement."""
         if self._stream_sock is None:
             return None
+        # No longer need the atexit safety net once a graceful stop has run.
+        atexit.unregister(self._atexit_stop)
         try:
             self._stream_sock.sendall(
                 json.dumps({"cmd": "measure_stop"}).encode() + b"\n"
