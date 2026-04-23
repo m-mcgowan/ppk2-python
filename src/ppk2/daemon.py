@@ -394,7 +394,7 @@ class DaemonServer:
         lost = 0
         deadline = time.monotonic() + duration_s
 
-        while time.monotonic() < deadline:
+        while time.monotonic() < deadline and self._running:
             raw = self._transport.read_available()
             if not raw:
                 time.sleep(0.01)

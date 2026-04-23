@@ -206,6 +206,48 @@ class TestDaemonSendResponseTolerance:
         assert not errors
 
 
+class TestMeasureDurationRespectsShutdown:
+    """`_measure_duration` blocks the event loop for its full duration,
+    which means a `shutdown` command arriving mid-measure can't be
+    processed until the measurement finishes. The fix is to have the
+    measure loop also check `self._running` and bail out early.
+    """
+
+    def test_measure_duration_bails_out_when_running_false(self):
+        """Simulate a 10-second measurement whose _running flag is flipped
+        to False partway through. The call must return in well under
+        the requested duration.
+        """
+        import time
+        import threading
+
+        server = DaemonServer(PPK2Port(port="/dev/TEST", serial_number="T", location=""))
+        server._transport = MockTransport(metadata=make_metadata_response())
+        server._transport.open()
+        server._state = DeviceState(
+            serial_number="T", port="/dev/TEST",
+            vdd_mv=3700, mode="source",
+        )
+        server._running = True
+
+        def flip_after_short_delay():
+            time.sleep(0.3)
+            server._running = False
+
+        threading.Thread(target=flip_after_short_delay, daemon=True).start()
+
+        t0 = time.monotonic()
+        server._measure_duration(duration_s=10.0, spike_filter=False)
+        elapsed = time.monotonic() - t0
+
+        # Should bail out shortly after _running goes False (0.3 s),
+        # not wait for the full 10 s.
+        assert elapsed < 2.0, (
+            f"_measure_duration took {elapsed:.2f} s to notice shutdown; "
+            "expected < 2 s"
+        )
+
+
 class TestDaemonProtocol:
     def test_status_command(self, harness):
         h, sock_path = harness
