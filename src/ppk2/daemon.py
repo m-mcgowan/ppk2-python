@@ -519,12 +519,43 @@ class DaemonServer:
         logger.info("Daemon stopped")
 
 
+class DaemonNotRunning(ConnectionError):
+    """No ppk2 daemon is running for the requested device.
+
+    Raised by :func:`resolve_daemon` when nothing matches. A subclass of
+    ``ConnectionError`` so existing ``except ConnectionError`` blocks keep
+    working.
+    """
+
+
+def resolve_daemon(
+    serial: str | None = None, port: str | None = None
+) -> tuple[str, Path]:
+    """Return ``(serial_number, socket_path)`` for a running daemon, or raise.
+
+    Convenience wrapper over :func:`find_daemon` for callers that want to
+    fail fast instead of checking for ``None``. Raises :class:`DaemonNotRunning`
+    if no matching daemon is found.
+    """
+    info = find_daemon(serial=serial, port=port)
+    if info is None:
+        what = (
+            f"serial {serial}" if serial
+            else f"port {port}" if port
+            else "any PPK2"
+        )
+        raise DaemonNotRunning(f"no ppk2 daemon running for {what}")
+    return info
+
+
 def find_daemon(
     serial: str | None = None, port: str | None = None
 ) -> tuple[str, Path] | None:
     """Check if a daemon is running for the given device.
 
     Returns ``(serial_number, socket_path)`` if found, else ``None``.
+    Use :func:`resolve_daemon` if you'd rather get an exception than
+    have to check for ``None`` at every call site.
     """
     sd = state_dir()
 

@@ -398,6 +398,38 @@ class TestDaemonStreaming:
         assert client._stream_vdd_mv == 3700
         client.stop_measuring()
 
+    def test_start_measuring_warns_when_dut_power_off(self, harness, caplog):
+        """Daemon starts with dut_power=False. Calling start_measuring
+        without toggling power on first produces an all-zero capture,
+        which is easy to misinterpret. Warn loudly.
+        """
+        import logging
+        h, sock_path = harness
+        client = h.client(sock_path)
+        with caplog.at_level(logging.WARNING, logger="ppk2.client"):
+            client.start_measuring()
+        client.stop_measuring()
+
+        assert any(
+            "dut power" in r.getMessage().lower()
+            and ("off" in r.getMessage().lower() or "0" in r.getMessage())
+            for r in caplog.records
+        ), f"expected DUT-power-off warning; got: {[r.getMessage() for r in caplog.records]}"
+
+    def test_start_measuring_no_warning_when_dut_power_on(self, harness, caplog):
+        import logging
+        h, sock_path = harness
+        client = h.client(sock_path)
+        client.toggle_dut_power(True)
+        with caplog.at_level(logging.WARNING, logger="ppk2.client"):
+            client.start_measuring()
+        client.stop_measuring()
+
+        assert not any(
+            "dut power" in r.getMessage().lower()
+            for r in caplog.records
+        ), f"unexpected DUT-power warning: {[r.getMessage() for r in caplog.records]}"
+
     def test_read_samples_returns_sample_objects(self, harness):
         """read_samples() returns Sample objects (API parity with PPK2Device)."""
         from ppk2.types import Sample
@@ -568,6 +600,38 @@ class TestStateDirManagement:
             _cleanup_stale(sn)
             assert not (tmp_path / f"{sn}.sock").exists()
             assert not (tmp_path / f"{sn}.pid").exists()
+
+    def test_resolve_daemon_raises_when_no_daemons(self, tmp_path):
+        """find_daemon returns None on miss (forcing every caller to
+        write the same if-check). resolve_daemon raises DaemonNotRunning
+        instead, so callers can just unpack the tuple.
+        """
+        from ppk2.daemon import DaemonNotRunning, resolve_daemon
+        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+            with pytest.raises(DaemonNotRunning) as exc:
+                resolve_daemon(serial="NONEXIST")
+            assert "NONEXIST" in str(exc.value)
+
+            with pytest.raises(DaemonNotRunning):
+                resolve_daemon()
+
+    def test_resolve_daemon_returns_tuple_when_running(self, tmp_path):
+        from ppk2.daemon import resolve_daemon
+        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+            sn = "LIVE1234"
+            (tmp_path / f"{sn}.sock").write_text("")
+            (tmp_path / f"{sn}.pid").write_text(str(os.getpid()))
+
+            serial, sock = resolve_daemon(serial=sn)
+            assert serial == sn
+            assert sock.name == f"{sn}.sock"
+
+    def test_daemon_not_running_is_connection_error(self):
+        """DaemonNotRunning should be a ConnectionError subclass so existing
+        `except ConnectionError` blocks keep working.
+        """
+        from ppk2.daemon import DaemonNotRunning
+        assert issubclass(DaemonNotRunning, ConnectionError)
 
 
 # --- MeasurementResult stats-only mode ---
