@@ -162,7 +162,12 @@ class DaemonServer:
         mode = metadata.get("mode", 2)
         self._state.mode = "source" if int(mode) == 2 else "ampere"
 
-        logger.info("Device connected: %s", metadata)
+        logger.info(
+            "Device connected: vdd=%d mode=%s",
+            self._state.vdd_mv,
+            self._state.mode,
+        )
+        logger.debug("Device metadata: %s", metadata)
 
     def _read_metadata(self) -> dict:
         text = ""
