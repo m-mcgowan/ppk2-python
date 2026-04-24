@@ -232,6 +232,96 @@ class TestParseSerialEvents:
         assert len(mapper._events) == 1
         assert mapper._events[0].high is True
 
+    # ── Timestamp wrap ────────────────────────────────────────────────
+    # embedded-trace emits uint32_t µs timestamps; they wrap every
+    # 2**32 µs ≈ 71.58 min. parse_serial_events compensates so the
+    # resulting EventMapper sees a monotonic timeline.
+
+    _WRAP_US = 1 << 32
+
+    def test_wrap_single_rollover(self):
+        pre = self._WRAP_US - 1_000_000    # 1 s before wrap
+        post = 500_000                     # 0.5 s after wrap
+        serial = self._b("gps", pre) + "\n" + self._e("gps", post) + "\n"
+
+        mapper = parse_serial_events(serial, {"gps": 0})
+        ts_values = [e.timestamp_s for e in mapper._events]
+
+        assert ts_values[0] == pytest.approx(pre / 1_000_000)
+        assert ts_values[1] == pytest.approx((post + self._WRAP_US) / 1_000_000)
+        # Duration across wrap is 1.5 s, not ~-4294 s
+        assert ts_values[1] - ts_values[0] == pytest.approx(1.5)
+
+    def test_wrap_multiple_rollovers_accumulate(self):
+        # Need each wrap to be a *large* backwards step (> 2**31 µs).
+        # Simulate two full rollovers: near-end → near-start → near-end →
+        # near-start.
+        raw = [
+            1_000,                         # start of period 1
+            self._WRAP_US - 1_000,         # near end of period 1
+            1_000,                         # wrapped → period 2 (wrap 1)
+            self._WRAP_US - 1_000,         # near end of period 2
+            1_000,                         # wrapped → period 3 (wrap 2)
+        ]
+        expected_us = [
+            1_000,
+            self._WRAP_US - 1_000,
+            1_000 + self._WRAP_US,
+            self._WRAP_US - 1_000 + self._WRAP_US,
+            1_000 + 2 * self._WRAP_US,
+        ]
+        lines = [self._b(f"s{i}", ts) for i, ts in enumerate(raw)]
+        channel_map = {f"s{i}": i for i in range(len(raw))}
+
+        mapper = parse_serial_events("\n".join(lines), channel_map)
+
+        observed_us = [e.timestamp_s * 1_000_000 for e in mapper._events]
+        for obs, exp in zip(observed_us, expected_us):
+            assert obs == pytest.approx(exp)
+
+    def test_wrap_unaffected_by_equal_timestamps(self):
+        # Equal ts is not a wrap — common for same-sample events.
+        serial = "\n".join([
+            self._b("gps", 500_000),
+            self._e("gps", 500_000),
+        ])
+        mapper = parse_serial_events(serial, {"gps": 0})
+        ts_values = [e.timestamp_s for e in mapper._events]
+        assert all(t == pytest.approx(0.5) for t in ts_values)
+
+    def test_wrap_does_not_trigger_on_ignored_events(self):
+        # Only mapped events count toward wrap detection — otherwise the
+        # ignored ones would trip spurious wraps. (Actually they're still
+        # observed on the device, so they *do* count: wrap detection sees
+        # every valid trace line, mapped or not.)
+        serial = "\n".join([
+            self._b("gps", 1_000),
+            self._b("other", self._WRAP_US - 100),   # unmapped, but wraps
+            self._b("other", 50),                    # unmapped, post-wrap
+            self._b("gps", 1_000_000),               # post-wrap gps event
+        ])
+        mapper = parse_serial_events(serial, {"gps": 0})
+        # Two gps events; the second is post-wrap so must get +2**32 µs.
+        assert len(mapper._events) == 2
+        assert mapper._events[1].timestamp_s == pytest.approx(
+            (1_000_000 + self._WRAP_US) / 1_000_000
+        )
+
+    def test_small_backwards_step_is_not_wrap(self):
+        # On dual-core ESP32, events from different cores can arrive at the
+        # Serial line with slight backwards skew. Threshold: only treat a
+        # backwards step > 2**31 µs (~35.8 min) as a true wrap.
+        serial = "\n".join([
+            self._b("gps", 1_000_500),   # core A
+            self._b("imu", 1_000_000),   # core B, 500 µs behind — NOT a wrap
+            self._b("gps", 2_000_000),
+        ])
+        mapper = parse_serial_events(serial, {"gps": 0, "imu": 1})
+        # Raw values preserved; no 2**32 added anywhere.
+        assert mapper._events[0].timestamp_s == pytest.approx(1.0005)
+        assert mapper._events[1].timestamp_s == pytest.approx(1.0)
+        assert mapper._events[2].timestamp_s == pytest.approx(2.0)
+
 
 class TestHtmlReportLegend:
     def test_html_report_labels_digital_channels(self, tmp_path):
