@@ -24,9 +24,7 @@ import math
 import random
 from dataclasses import dataclass, field
 
-from .types import MeasurementResult, Sample
-
-SAMPLES_PER_SECOND = 100_000
+from .types import MeasurementResult, SAMPLES_PER_SECOND, Sample
 
 
 @dataclass

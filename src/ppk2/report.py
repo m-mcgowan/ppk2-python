@@ -9,9 +9,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .types import MeasurementResult, Sample
-
-SAMPLE_PERIOD_US = 10
+from .types import MeasurementResult, SAMPLE_PERIOD_US, Sample
 
 
 @dataclass

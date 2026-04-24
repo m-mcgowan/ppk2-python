@@ -13,11 +13,10 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 
-from .types import MeasurementResult, Sample
+from .types import MeasurementResult, SAMPLES_PER_SECOND, Sample
 
 FRAME_SIZE = 6  # 4 bytes float32 + 2 bytes uint16
 FORMAT_VERSION = 2
-SAMPLES_PER_SECOND = 100_000
 MINIMAP_MAX_ELEMENTS = 10_000
 
 

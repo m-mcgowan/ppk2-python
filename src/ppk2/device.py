@@ -11,15 +11,22 @@ from . import commands
 from .conversion import SpikeFilter, adc_to_microamps
 from .parser import SampleParser, parse_metadata
 from .transport import PPK2Port, SerialTransport, Transport, list_ppk2_devices
-from .types import MeasurementResult, Modifiers, Sample
+# SAMPLE_RATE_HZ and SAMPLE_PERIOD_US are re-exported below for back-compat
+# with `from ppk2.device import SAMPLE_RATE_HZ`. The canonical definitions
+# live in ppk2.types — new code should import from there.
+from .types import (
+    MeasurementResult,
+    Modifiers,
+    Sample,
+    SAMPLE_PERIOD_US,  # noqa: F401
+    SAMPLE_RATE_HZ,  # noqa: F401
+)
 
 logger = logging.getLogger(__name__)
 
 # Hardware limits
 VDD_MIN = 800
 VDD_MAX = 5000
-SAMPLE_RATE_HZ = 100_000
-SAMPLE_PERIOD_US = 10
 
 
 class PPK2Device:

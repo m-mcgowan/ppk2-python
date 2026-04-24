@@ -2,6 +2,13 @@
 
 from dataclasses import dataclass, field
 
+# Canonical hardware constants for the PPK2. Other modules re-export these
+# under their own names for backward compatibility, but this is the single
+# source of truth.
+SAMPLE_RATE_HZ = 100_000
+SAMPLE_PERIOD_US = 10
+SAMPLES_PER_SECOND = SAMPLE_RATE_HZ
+
 
 @dataclass
 class Modifiers:

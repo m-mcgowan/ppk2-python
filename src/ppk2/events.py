@@ -30,11 +30,9 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .types import MeasurementResult
+from .types import MeasurementResult, SAMPLES_PER_SECOND
 
 logger = logging.getLogger(__name__)
-
-SAMPLES_PER_SECOND = 100_000
 
 
 @dataclass
@@ -214,6 +212,19 @@ def parse_serial_events(
     """
     mapper = EventMapper(channel_map)
 
+    # Wrap detection: embedded-trace emits uint32_t µs timestamps that roll
+    # over every 2**32 µs ≈ 71.58 min. Only a *large* backwards step counts
+    # as a wrap — on dual-core ESP32 events from different cores can arrive
+    # at the Serial line with slight backwards skew. Threshold: half the
+    # wrap period (2**31 µs ≈ 35.8 min); real wraps are always close to
+    # -2**32, jitter is always a few ms.
+    # See embedded-trace/docs/design.md#timestamp-wrap.
+    _WRAP_US = 1 << 32
+    _WRAP_THRESHOLD = 1 << 31
+
+    last_raw_ts: int | None = None
+    wrap_count = 0
+
     for line in serial_output.strip().splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -226,14 +237,29 @@ def parse_serial_events(
 
         ph = obj.get("ph")
         name = obj.get("name", "")
-        ts_us = obj.get("ts", 0)
+        raw_ts_us = obj.get("ts", 0)
+
+        # Update wrap state on every valid trace line, mapped or not —
+        # wrap is a property of the timestamp stream, not of what we map.
+        if ph in ("B", "E"):
+            if last_raw_ts is not None and raw_ts_us - last_raw_ts < -_WRAP_THRESHOLD:
+                wrap_count += 1
+                logger.info(
+                    "parse_serial_events: timestamp wrap detected "
+                    "(raw %d vs previous %d) — wrap count now %d",
+                    raw_ts_us, last_raw_ts, wrap_count,
+                )
+            last_raw_ts = raw_ts_us
 
         if name not in channel_map:
             continue
 
+        adjusted_ts_us = raw_ts_us + wrap_count * _WRAP_US
+        ts_s = adjusted_ts_us / 1_000_000
+
         if ph == "B":
-            mapper.start(name, ts_us / 1_000_000)
+            mapper.start(name, ts_s)
         elif ph == "E":
-            mapper.stop(name, ts_us / 1_000_000)
+            mapper.stop(name, ts_s)
 
     return mapper
