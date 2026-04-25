@@ -188,3 +188,19 @@ class TestScopeTable:
         # channel column shows "0" for gps and "—" (em dash) for boot.
         assert ">0<" in text  # channel cell
         assert "&mdash;" in text or "—" in text
+
+    def test_scope_name_is_html_escaped(self, tmp_path):
+        from ppk2.report import ProfileResult, html_report
+        from ppk2.types import Scope
+
+        result = self._result()
+        result.events = [
+            Scope(name="<script>alert(1)</script>", start_s=0.0, end_s=0.001, channel=0),
+        ]
+        out = tmp_path / "r.html"
+        html_report([ProfileResult(name="t1", result=result)], out)
+        text = out.read_text()
+        # Raw <script> must not appear in the rendered output.
+        assert "<script>alert(1)</script>" not in text
+        # The escaped form must appear.
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in text

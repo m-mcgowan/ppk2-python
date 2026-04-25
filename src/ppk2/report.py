@@ -7,6 +7,7 @@ Produces:
 
 import os
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 
 from .types import MeasurementResult, SAMPLE_PERIOD_US, Sample
@@ -70,7 +71,7 @@ def _scope_table_html(events: list) -> str:
         ch = str(s.channel) if s.channel is not None else "&mdash;"
         dur_ms = (s.end_s - s.start_s) * 1000.0
         rows.append(
-            f"<tr><td>{s.name}</td>"
+            f"<tr><td>{escape(s.name)}</td>"
             f"<td>{s.start_s:.6f}</td>"
             f"<td>{s.end_s:.6f}</td>"
             f"<td>{dur_ms:.3f}</td>"
