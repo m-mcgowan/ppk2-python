@@ -21,6 +21,7 @@ Follows [Keep a Changelog](https://keepachangelog.com/) conventions.
 ### Changed
 - README restructured: feature list now links to per-feature docs in `docs/`; long sections (AI, firmware, GitHub Action, desktop, file format) factored out
 - Quick Start leads with basic measurement and the daemon (with explanation of the source-meter DTR-on-close limitation) instead of firmware upgrade
+- AI default model bumped from `claude-sonnet-4-5-20250929` to `claude-sonnet-4-6` (`generate_profile`, `analyze_profile`, `validate_profile`, and the `--model` argparse defaults)
 
 ### Fixed
 - Drain serial buffer fully on reconnect

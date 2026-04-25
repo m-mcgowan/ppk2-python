@@ -98,7 +98,7 @@ def _fmt(ua: float) -> str:
 
 def generate_profile(
     description: str,
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "claude-sonnet-4-6",
     seed: int | None = None,
 ) -> GenerationResult:
     """Generate a synthetic power profile from a natural language description.
@@ -156,7 +156,7 @@ _ANALYSIS_PROMPT = dedent("""\
 def analyze_profile(
     result: MeasurementResult,
     context: str = "",
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "claude-sonnet-4-6",
 ) -> str:
     """Analyze a power profile using Claude.
 
@@ -259,7 +259,7 @@ class ValidationResult:
 def validate_profile(
     result: MeasurementResult,
     spec: str,
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "claude-sonnet-4-6",
 ) -> ValidationResult:
     """Validate a power profile against a natural language specification.
 

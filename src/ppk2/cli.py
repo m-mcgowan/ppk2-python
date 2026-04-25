@@ -587,13 +587,13 @@ def main() -> int:
     p_validate.add_argument("file", help="Path to .ppk2 file")
     p_validate.add_argument("--spec", help="Expected power behavior (natural language)")
     p_validate.add_argument("--spec-file", help="File containing the spec")
-    p_validate.add_argument("--model", default="claude-sonnet-4-5-20250929", help="Anthropic model")
+    p_validate.add_argument("--model", default="claude-sonnet-4-6", help="Anthropic model")
 
     # ppk2 analyze
     p_analyze = sub.add_parser("analyze", help="Analyze a .ppk2 file using Claude")
     p_analyze.add_argument("file", help="Path to .ppk2 file")
     p_analyze.add_argument("--context", help="What the device was doing during recording")
-    p_analyze.add_argument("--model", default="claude-sonnet-4-5-20250929", help="Anthropic model")
+    p_analyze.add_argument("--model", default="claude-sonnet-4-6", help="Anthropic model")
 
     # ppk2 merge
     p_merge = sub.add_parser("merge", help="Merge Chrome Trace with PPK2 power data")
@@ -608,7 +608,7 @@ def main() -> int:
     p_gen.add_argument("description", help="Natural language power profile description")
     p_gen.add_argument("-o", "--output", default="profile.ppk2", help="Output .ppk2 file path")
     p_gen.add_argument("--seed", type=int, help="Random seed for reproducible output")
-    p_gen.add_argument("--model", default="claude-sonnet-4-5-20250929", help="Anthropic model")
+    p_gen.add_argument("--model", default="claude-sonnet-4-6", help="Anthropic model")
     p_gen.add_argument("--open", action="store_true", help="Open in nRF Connect after generating")
 
     # --- Firmware commands ---

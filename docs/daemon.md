@@ -30,9 +30,6 @@ issues a single request, and closes — so by the time `ppk2 measure 5` opens
 the port for the third time, the rail set up by the first two commands is
 already gone, and the DUT has just been brown-out reset.
 
-> **TODO:** link to the nRF DevZone forum threads that document this DTR
-> dependence in source meter mode. (User to fill in.)
-
 The daemon side-steps this by keeping a single serial connection open for the
 lifetime of the daemon process. Clients talk to the daemon, not directly to
 the PPK2, so the rail stays up between commands.
