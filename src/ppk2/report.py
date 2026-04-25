@@ -60,7 +60,7 @@ def _format_time_ppk(ms: float, sep: str = "\n") -> str:
 
 
 def _scope_table_html(events: list) -> str:
-    """Render a sortable <details> block listing named scopes.
+    """Render a <details> block listing named scopes.
 
     Returns an empty string when there are no events.
     """

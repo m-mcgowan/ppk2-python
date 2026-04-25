@@ -456,3 +456,14 @@ class TestEventMapperToScopes:
         result = _make_result(1000)
 
         assert mapper.to_scopes(result) == []
+
+    def test_unterminated_scope_after_capture_end_does_not_invert(self):
+        # If a B arrives after the capture has ended (e.g. firmware
+        # ringdown), end_s must never be less than start_s.
+        mapper = EventMapper({"gps": 0})
+        result = _make_result(1000)  # duration = 0.01s
+        mapper.start("gps", 0.5)  # well past capture end
+
+        scopes = mapper.to_scopes(result)
+        assert len(scopes) == 1
+        assert scopes[0].end_s >= scopes[0].start_s

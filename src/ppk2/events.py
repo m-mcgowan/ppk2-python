@@ -205,7 +205,7 @@ class EventMapper:
                 scopes.append(Scope(
                     name=start.channel_name,
                     start_s=start.timestamp_s,
-                    end_s=result.duration_s,
+                    end_s=max(start.timestamp_s, result.duration_s),
                     channel=start.channel_bit,
                 ))
 
@@ -251,7 +251,7 @@ class EventMapper:
 
 def parse_serial_events(
     serial_output: str,
-    channel_map: dict[str, int],
+    channel_map: dict[str, int | None],
 ) -> EventMapper:
     """Parse DUT serial output (Chrome JSON trace lines) into an EventMapper.
 
