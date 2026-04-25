@@ -137,3 +137,54 @@ class TestMarkdownTableToHtml:
         html = _markdown_table_to_html(md)
         assert "data-loss" in html
         assert "some note" in html
+
+
+class TestScopeTable:
+    def _result(self, n=1000):
+        from ppk2.types import MeasurementResult, Sample
+        return MeasurementResult(
+            samples=[Sample(current_ua=10.0, range=0, logic=0, counter=i & 0x3F) for i in range(n)],
+            duration_s=n / 100_000,
+            sample_count=n,
+        )
+
+    def test_scope_table_present_when_events_nonempty(self, tmp_path):
+        from ppk2.report import ProfileResult, html_report
+        from ppk2.types import Scope
+
+        result = self._result()
+        result.events = [
+            Scope(name="gps.cycle", start_s=0.001, end_s=0.005, channel=0),
+            Scope(name="notecard.publish", start_s=0.002, end_s=0.004),
+        ]
+        out = tmp_path / "r.html"
+        html_report([ProfileResult(name="t1", result=result)], out)
+        text = out.read_text()
+        assert "Named scopes (2)" in text
+        assert "gps.cycle" in text
+        assert "notecard.publish" in text
+
+    def test_scope_table_absent_when_events_empty(self, tmp_path):
+        from ppk2.report import ProfileResult, html_report
+
+        result = self._result()
+        out = tmp_path / "r.html"
+        html_report([ProfileResult(name="t1", result=result)], out)
+        text = out.read_text()
+        assert "Named scopes" not in text
+
+    def test_scope_table_renders_channel_or_dash(self, tmp_path):
+        from ppk2.report import ProfileResult, html_report
+        from ppk2.types import Scope
+
+        result = self._result()
+        result.events = [
+            Scope(name="gps", start_s=0.0, end_s=0.001, channel=0),
+            Scope(name="boot", start_s=0.0, end_s=0.001),  # no channel
+        ]
+        out = tmp_path / "r.html"
+        html_report([ProfileResult(name="t1", result=result)], out)
+        text = out.read_text()
+        # channel column shows "0" for gps and "—" (em dash) for boot.
+        assert ">0<" in text  # channel cell
+        assert "&mdash;" in text or "—" in text

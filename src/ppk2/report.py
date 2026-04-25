@@ -58,6 +58,39 @@ def _format_time_ppk(ms: float, sep: str = "\n") -> str:
     return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms_part:03d}.{us:03d} ms"
 
 
+def _scope_table_html(events: list) -> str:
+    """Render a sortable <details> block listing named scopes.
+
+    Returns an empty string when there are no events.
+    """
+    if not events:
+        return ""
+    rows = []
+    for s in sorted(events, key=lambda e: e.start_s):
+        ch = str(s.channel) if s.channel is not None else "&mdash;"
+        dur_ms = (s.end_s - s.start_s) * 1000.0
+        rows.append(
+            f"<tr><td>{s.name}</td>"
+            f"<td>{s.start_s:.6f}</td>"
+            f"<td>{s.end_s:.6f}</td>"
+            f"<td>{dur_ms:.3f}</td>"
+            f"<td>{ch}</td></tr>"
+        )
+    rows_html = "\n".join(rows)
+    return (
+        f"<details class=\"scope-table\">"
+        f"<summary>Named scopes ({len(events)})</summary>"
+        f"<table>"
+        f"<thead><tr>"
+        f"<th>Name</th><th>Start (s)</th><th>End (s)</th>"
+        f"<th>Duration (ms)</th><th>Channel</th>"
+        f"</tr></thead>"
+        f"<tbody>{rows_html}</tbody>"
+        f"</table>"
+        f"</details>"
+    )
+
+
 def summary_table(results: list[ProfileResult]) -> str:
     """Generate a markdown summary table from test results.
 
@@ -1133,6 +1166,11 @@ def html_report(
     updateTickLabels(0, tMax);
 }})();
 </script>""")
+
+        # Named scopes table — renders only when result.events is non-empty.
+        scope_html = _scope_table_html(tr.result.events)
+        if scope_html:
+            html_parts.append(scope_html)
 
         chart_idx += 1
 
