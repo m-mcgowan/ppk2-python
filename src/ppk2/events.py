@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 class _Event:
     """A timestamped event transition."""
     channel_name: str
-    channel_bit: int
+    channel_bit: int | None
     high: bool
     timestamp_s: float
 
@@ -49,15 +49,17 @@ class EventMapper:
     """Maps named events to digital channels and applies them to measurements.
 
     Args:
-        channel_map: Mapping of event name to D0-D7 channel number (0-7).
+        channel_map: Mapping of event name to D0-D7 channel number (0-7),
+            or None for software-only scopes that should not drive a
+            sample.logic bit but should still be recorded.
     """
-    channel_map: dict[str, int]
+    channel_map: dict[str, int | None]
     _events: list[_Event] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         for name, ch in self.channel_map.items():
-            if not 0 <= ch <= 7:
-                raise ValueError(f"Channel must be 0-7, got {ch} for '{name}'")
+            if ch is not None and not 0 <= ch <= 7:
+                raise ValueError(f"Channel must be 0-7 or None, got {ch} for '{name}'")
 
     def event(self, name: str, high: bool, timestamp_s: float) -> None:
         """Record an event transition.
@@ -145,10 +147,11 @@ class EventMapper:
             # Apply all transitions at or before this sample
             while trans_idx < len(transitions) and transitions[trans_idx][0] <= i:
                 _, bit, high = transitions[trans_idx]
-                if high:
-                    current_mask |= (1 << bit)
-                else:
-                    current_mask &= ~(1 << bit)
+                if bit is not None:
+                    if high:
+                        current_mask |= (1 << bit)
+                    else:
+                        current_mask &= ~(1 << bit)
                 trans_idx += 1
 
             sample.logic = current_mask
@@ -161,12 +164,13 @@ class EventMapper:
         """
         channels = {}
         for name, ch in self.channel_map.items():
-            channels[f"D{ch}"] = name
+            if ch is not None:
+                channels[f"D{ch}"] = name
 
         events = [
             {
                 "name": e.channel_name,
-                "channel": f"D{e.channel_bit}",
+                "channel": f"D{e.channel_bit}" if e.channel_bit is not None else None,
                 "state": "high" if e.high else "low",
                 "timestamp_s": e.timestamp_s,
             }

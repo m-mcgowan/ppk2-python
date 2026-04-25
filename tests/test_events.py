@@ -323,6 +323,32 @@ class TestParseSerialEvents:
         assert mapper._events[2].timestamp_s == pytest.approx(2.0)
 
 
+class TestEventMapperOptionalChannel:
+    def test_accepts_none_channel(self):
+        # None means "software-only" — recorded but does not toggle a logic bit.
+        EventMapper({"gps": 0, "boot": None})  # must not raise
+
+    def test_invalid_channel_still_raises(self):
+        with pytest.raises(ValueError):
+            EventMapper({"oops": 8})
+
+    def test_apply_skips_logic_for_none_channel(self):
+        mapper = EventMapper({"gps": 0, "boot": None})
+        result = _make_result(1000)
+        mapper.start("gps", 0.002)
+        mapper.start("boot", 0.001)
+        mapper.stop("gps", 0.005)
+        mapper.stop("boot", 0.008)
+        mapper.apply(result)
+
+        # gps still toggles D0 the way it always did.
+        assert result.samples[200].logic == 1
+        assert result.samples[500].logic == 0
+        # boot never touches sample.logic — the bitmask only ever shows D0.
+        for s in result.samples:
+            assert s.logic & ~1 == 0  # only bit 0 is ever set
+
+
 class TestHtmlReportLegend:
     def test_html_report_labels_digital_channels(self, tmp_path):
         """HTML report uses legend names instead of D0/D1 for channel traces."""
