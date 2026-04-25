@@ -13,10 +13,11 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 
-from .types import MeasurementResult, SAMPLES_PER_SECOND, Sample
+from .types import MeasurementResult, SAMPLES_PER_SECOND, Sample, Scope
 
 FRAME_SIZE = 6  # 4 bytes float32 + 2 bytes uint16
 FORMAT_VERSION = 2
+EVENTS_FORMAT_VERSION = 1
 MINIMAP_MAX_ELEMENTS = 10_000
 
 
@@ -25,6 +26,7 @@ def save_ppk2(
     output_path: str | Path,
     start_time_ms: int | None = None,
     samples_per_second: int = SAMPLES_PER_SECOND,
+    events: list[Scope] | None = None,
 ) -> None:
     """Save a MeasurementResult as a .ppk2 file.
 
@@ -33,9 +35,15 @@ def save_ppk2(
         output_path: Path for the .ppk2 file.
         start_time_ms: Unix epoch timestamp in milliseconds. Defaults to now.
         samples_per_second: Sampling rate. Defaults to 100000.
+        events: Scope intervals to embed as events.json inside the ZIP.
+            If None, falls back to result.events. If both are empty, no
+            events.json is written and the file is bit-identical to a
+            pre-events save.
     """
     if start_time_ms is None:
         start_time_ms = int(time.time() * 1000)
+    if events is None:
+        events = result.events
 
     output_path = Path(output_path)
 
@@ -60,6 +68,23 @@ def save_ppk2(
         zf.writestr("session.raw", bytes(session_buf))
         zf.writestr("metadata.json", json.dumps(metadata))
         zf.writestr("minimap.raw", json.dumps(minimap))
+        if events:
+            zf.writestr("events.json", json.dumps(_events_to_json(events)))
+
+
+def _events_to_json(events: list[Scope]) -> dict:
+    """Serialise a list of Scope to the events.json schema."""
+    out_scopes = []
+    for s in events:
+        item = {
+            "name": s.name,
+            "start_s": s.start_s,
+            "end_s": s.end_s,
+        }
+        if s.channel is not None:
+            item["channel"] = s.channel
+        out_scopes.append(item)
+    return {"version": EVENTS_FORMAT_VERSION, "scopes": out_scopes}
 
 
 def load_ppk2(input_path: str | Path) -> MeasurementResult:

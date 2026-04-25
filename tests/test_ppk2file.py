@@ -181,3 +181,68 @@ class TestMinimap:
         with zipfile.ZipFile(path) as zf:
             minimap = json.loads(zf.read("minimap.raw"))
         assert minimap["data"]["length"] == 0
+
+
+class TestSaveEvents:
+    def test_no_events_no_events_json_in_zip(self, tmp_path):
+        samples = _make_samples(10)
+        result = MeasurementResult(samples=samples, duration_s=0.0001, sample_count=10)
+        path = tmp_path / "test.ppk2"
+        save_ppk2(result, path)
+
+        with zipfile.ZipFile(path) as zf:
+            assert "events.json" not in zf.namelist()
+
+    def test_events_param_writes_events_json(self, tmp_path):
+        from ppk2.types import Scope
+
+        samples = _make_samples(10)
+        result = MeasurementResult(samples=samples, duration_s=0.0001, sample_count=10)
+        scopes = [
+            Scope(name="gps", start_s=0.001, end_s=0.005, channel=0),
+            Scope(name="boot", start_s=0.0, end_s=0.0001),
+        ]
+        path = tmp_path / "test.ppk2"
+        save_ppk2(result, path, events=scopes)
+
+        with zipfile.ZipFile(path) as zf:
+            assert "events.json" in zf.namelist()
+            doc = json.loads(zf.read("events.json"))
+
+        assert doc["version"] == 1
+        scope_names = [s["name"] for s in doc["scopes"]]
+        assert "gps" in scope_names
+        assert "boot" in scope_names
+
+    def test_channel_omitted_when_none(self, tmp_path):
+        from ppk2.types import Scope
+
+        samples = _make_samples(10)
+        result = MeasurementResult(samples=samples, duration_s=0.0001, sample_count=10)
+        scopes = [
+            Scope(name="gps", start_s=0.001, end_s=0.005, channel=0),
+            Scope(name="boot", start_s=0.0, end_s=0.0001),  # no channel
+        ]
+        path = tmp_path / "test.ppk2"
+        save_ppk2(result, path, events=scopes)
+
+        with zipfile.ZipFile(path) as zf:
+            doc = json.loads(zf.read("events.json"))
+
+        by_name = {s["name"]: s for s in doc["scopes"]}
+        assert by_name["gps"]["channel"] == 0
+        assert "channel" not in by_name["boot"]
+
+    def test_result_events_used_when_param_omitted(self, tmp_path):
+        from ppk2.types import Scope
+
+        samples = _make_samples(10)
+        result = MeasurementResult(samples=samples, duration_s=0.0001, sample_count=10)
+        result.events = [Scope(name="gps", start_s=0.0, end_s=0.0001, channel=0)]
+        path = tmp_path / "test.ppk2"
+        save_ppk2(result, path)  # events kwarg omitted
+
+        with zipfile.ZipFile(path) as zf:
+            assert "events.json" in zf.namelist()
+            doc = json.loads(zf.read("events.json"))
+        assert doc["scopes"][0]["name"] == "gps"
