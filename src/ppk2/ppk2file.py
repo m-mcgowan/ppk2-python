@@ -94,13 +94,20 @@ def load_ppk2(input_path: str | Path) -> MeasurementResult:
         input_path: Path to the .ppk2 file.
 
     Returns:
-        MeasurementResult with samples and metadata.
+        MeasurementResult with samples, metadata, and (if present) events.
+
+    Raises:
+        ValueError: If events.json has an unknown schema version.
     """
     input_path = Path(input_path)
 
     with zipfile.ZipFile(input_path, "r") as zf:
         session_data = zf.read("session.raw")
         metadata_json = json.loads(zf.read("metadata.json"))
+        names = set(zf.namelist())
+        events_doc = (
+            json.loads(zf.read("events.json")) if "events.json" in names else None
+        )
 
     meta = metadata_json.get("metadata", {})
     samples_per_second = meta.get("samplesPerSecond", SAMPLES_PER_SECOND)
@@ -114,20 +121,41 @@ def load_ppk2(input_path: str | Path) -> MeasurementResult:
         samples.append(
             Sample(
                 current_ua=current_ua,
-                range=0,  # range not stored in .ppk2
+                range=0,
                 logic=logic,
                 counter=i & 0x3F,
             )
         )
 
     duration_s = n_samples / samples_per_second if samples_per_second else 0.0
+    events = _events_from_json(events_doc) if events_doc is not None else []
 
     return MeasurementResult(
         samples=samples,
         duration_s=duration_s,
         sample_count=n_samples,
         lost_samples=0,
+        events=events,
     )
+
+
+def _events_from_json(doc: dict) -> list[Scope]:
+    """Parse the events.json dict, raising on unknown schema version."""
+    version = doc.get("version")
+    if version != EVENTS_FORMAT_VERSION:
+        raise ValueError(
+            f"Unknown events.json schema version {version!r} "
+            f"(this build understands version {EVENTS_FORMAT_VERSION})"
+        )
+    return [
+        Scope(
+            name=s["name"],
+            start_s=s["start_s"],
+            end_s=s["end_s"],
+            channel=s.get("channel"),
+        )
+        for s in doc.get("scopes", [])
+    ]
 
 
 def _build_minimap(

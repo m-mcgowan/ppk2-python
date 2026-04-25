@@ -4,6 +4,8 @@ import json
 import struct
 import zipfile
 
+import pytest
+
 from ppk2.ppk2file import FRAME_SIZE, load_ppk2, save_ppk2
 from ppk2.types import MeasurementResult, Sample
 
@@ -246,3 +248,49 @@ class TestSaveEvents:
             assert "events.json" in zf.namelist()
             doc = json.loads(zf.read("events.json"))
         assert doc["scopes"][0]["name"] == "gps"
+
+
+class TestLoadEvents:
+    def test_old_file_no_events_json(self, tmp_path):
+        # File written without any events should load with events == [].
+        samples = _make_samples(10)
+        result = MeasurementResult(samples=samples, duration_s=0.0001, sample_count=10)
+        path = tmp_path / "old.ppk2"
+        save_ppk2(result, path)
+
+        loaded = load_ppk2(path)
+        assert loaded.events == []
+
+    def test_round_trip_preserves_scopes(self, tmp_path):
+        from ppk2.types import Scope
+
+        samples = _make_samples(10)
+        result = MeasurementResult(samples=samples, duration_s=0.0001, sample_count=10)
+        scopes = [
+            Scope(name="gps", start_s=0.001, end_s=0.005, channel=0),
+            Scope(name="boot", start_s=0.0, end_s=0.0001),
+        ]
+        path = tmp_path / "with_events.ppk2"
+        save_ppk2(result, path, events=scopes)
+
+        loaded = load_ppk2(path)
+        assert len(loaded.events) == 2
+        by_name = {s.name: s for s in loaded.events}
+        assert by_name["gps"].start_s == pytest.approx(0.001)
+        assert by_name["gps"].end_s == pytest.approx(0.005)
+        assert by_name["gps"].channel == 0
+        assert by_name["boot"].channel is None
+
+    def test_schema_version_mismatch_raises(self, tmp_path):
+        # Hand-craft a .ppk2 with a version we don't understand.
+        samples = _make_samples(10)
+        result = MeasurementResult(samples=samples, duration_s=0.0001, sample_count=10)
+        path = tmp_path / "bad.ppk2"
+        save_ppk2(result, path)
+
+        # Splice in an events.json with a future version.
+        with zipfile.ZipFile(path, "a") as zf:
+            zf.writestr("events.json", json.dumps({"version": 99, "scopes": []}))
+
+        with pytest.raises(ValueError, match="events.json"):
+            load_ppk2(path)
