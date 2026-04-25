@@ -155,7 +155,7 @@ def list_ppk2_devices() -> list[PPK2Port]:
             continue
         all_ports.append((
             port.device,
-            (port.serial_number or "")[:8],
+            port.serial_number or "",
             port.location or "",
         ))
 

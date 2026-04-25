@@ -72,7 +72,8 @@ class TestDiscovery:
         assert len(devices) >= 1
         d = devices[0]
         assert d.port
-        assert len(d.serial_number) == 8
+        assert d.serial_number, "device should report a serial number"
+        assert d.serial_number.isalnum()
 
     def test_list_devices_filters_auxiliary_port(self):
         """Only one port per physical device should be returned."""
@@ -351,19 +352,7 @@ class TestFirmwareQuery:
                 break
 
         sn = resolve_device().serial_number
-        # nrfutil + Nordic SDFU on macOS occasionally races on USB
-        # enumeration — one retry with a short pause handles it.
-        last_err: Exception | None = None
-        for attempt in range(3):
-            try:
-                info = firmware.query(serial_number=sn)
-                break
-            except firmware.FirmwareQueryError as e:
-                last_err = e
-                if attempt < 2:
-                    time.sleep(2.0)
-        else:
-            raise last_err  # type: ignore[misc]
+        info = firmware.query(serial_number=sn)
 
         assert info.serial_number
         assert info.bootloader_type
