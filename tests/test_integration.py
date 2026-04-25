@@ -18,6 +18,7 @@ import pytest
 
 from ppk2.device import PPK2Device, SAMPLE_RATE_HZ
 from ppk2.transport import NORDIC_VID, PPK2_PID, list_ppk2_devices
+import serial.tools.list_ports
 
 # Require explicit opt-in via PPK2_VDD_MV to avoid accidental hardware damage
 _vdd_str = os.environ.get("PPK2_VDD_MV")
@@ -47,6 +48,22 @@ def ppk():
     if device._transport.is_open:
         device.toggle_dut_power(False)
         device.close()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _recover_from_dfu_at_end():
+    """After the test module finishes, send DFU ABORT if the PPK2 ended up
+    stuck in the bootloader. Lets the next test run start clean.
+    """
+    yield  # Run all tests first.
+    from ppk2 import firmware
+    dfu_pid = firmware.PPK2_DFU_PID
+    for p in serial.tools.list_ports.comports():
+        if p.vid == NORDIC_VID and p.pid == dfu_pid and p.serial_number:
+            try:
+                firmware.abort_dfu(p.serial_number)
+            except Exception:
+                pass
 
 
 class TestDiscovery:
@@ -323,8 +340,18 @@ class TestFirmwareQuery:
         if shutil.which("nrfutil") is None:
             pytest.skip("nrfutil not installed")
 
-        serial = resolve_device().serial_number
-        info = firmware.query(serial_number=serial)
+        # If the device is in DFU mode (e.g. left there by a previous
+        # nrfutil session against the SDFU bootloader), recover first
+        # so resolve_device() — which only matches app-mode PIDs — finds it.
+        dfu_pid = firmware.PPK2_DFU_PID
+        for p in serial.tools.list_ports.comports():
+            if p.vid == NORDIC_VID and p.pid == dfu_pid and p.serial_number:
+                firmware.abort_dfu(p.serial_number)
+                time.sleep(2.0)  # USB re-enumeration
+                break
+
+        sn = resolve_device().serial_number
+        info = firmware.query(serial_number=sn)
 
         assert info.serial_number
         assert info.bootloader_type
