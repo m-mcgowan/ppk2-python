@@ -351,7 +351,19 @@ class TestFirmwareQuery:
                 break
 
         sn = resolve_device().serial_number
-        info = firmware.query(serial_number=sn)
+        # nrfutil + Nordic SDFU on macOS occasionally races on USB
+        # enumeration — one retry with a short pause handles it.
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                info = firmware.query(serial_number=sn)
+                break
+            except firmware.FirmwareQueryError as e:
+                last_err = e
+                if attempt < 2:
+                    time.sleep(2.0)
+        else:
+            raise last_err  # type: ignore[misc]
 
         assert info.serial_number
         assert info.bootloader_type
