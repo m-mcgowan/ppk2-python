@@ -63,3 +63,36 @@ class TestMeasurementResult:
         assert result.mean_ua == 0.0
         assert result.min_ua == 0.0
         assert result.max_ua == 0.0
+
+
+def test_scope_dataclass_fields():
+    from ppk2.types import Scope
+
+    s = Scope(name="gps", start_s=0.5, end_s=2.0)
+    assert s.name == "gps"
+    assert s.start_s == 0.5
+    assert s.end_s == 2.0
+    assert s.channel is None  # optional
+
+
+def test_scope_with_channel():
+    from ppk2.types import Scope
+
+    s = Scope(name="gps", start_s=0.5, end_s=2.0, channel=0)
+    assert s.channel == 0
+
+
+def test_measurement_result_events_default_empty():
+    from ppk2.types import MeasurementResult
+
+    r = MeasurementResult(samples=[])
+    assert r.events == []
+
+
+def test_measurement_result_events_assignable():
+    from ppk2.types import MeasurementResult, Scope
+
+    r = MeasurementResult(samples=[])
+    r.events.append(Scope(name="gps", start_s=0.0, end_s=1.0))
+    assert len(r.events) == 1
+    assert r.events[0].name == "gps"

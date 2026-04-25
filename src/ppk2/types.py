@@ -45,6 +45,16 @@ class Sample:
 
 
 @dataclass
+class Scope:
+    """A named time interval inside a capture. Pre-computed B/E pair."""
+
+    name: str
+    start_s: float
+    end_s: float
+    channel: int | None = None
+
+
+@dataclass
 class MeasurementResult:
     """Statistics from a measurement window."""
 
@@ -52,6 +62,7 @@ class MeasurementResult:
     duration_s: float = 0.0
     sample_count: int = 0
     lost_samples: int = 0
+    events: list["Scope"] = field(default_factory=list)
     # Pre-computed stats (used by daemon client when raw samples aren't available)
     _mean_ua: float | None = field(default=None, repr=False)
     _min_ua: float | None = field(default=None, repr=False)
