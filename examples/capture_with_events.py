@@ -69,12 +69,14 @@ def canned_serial_stream(capture_start_device_us: int) -> str:
 
     lines = [
         "[boot] entering sensor cycle",
+        b("boot",   0),
         b("gps",    200),
         e("gps",    800),
         b("sensor", 800),
         e("sensor", 1100),
         b("radio",  1100),
         e("radio",  1400),
+        e("boot",   1700),
         "[boot] cycle complete",
     ]
     return "\n".join(lines)
@@ -97,8 +99,10 @@ def main():
 
     serial_output = canned_serial_stream(capture_start_device_us)
 
-    # Map each trace name to a digital channel (D0–D7).
-    channel_map = {"gps": 0, "sensor": 1, "radio": 2}
+    # `None` = software-only scope: appears in the embedded events.json
+    # and the HTML report's Named-scopes table, but does not toggle a
+    # D0–D7 hardware bit (so nRF Connect Power Profiler ignores it).
+    channel_map = {"gps": 0, "sensor": 1, "radio": 2, "boot": None}
 
     # NOTE on time alignment (see docs/dx_notes.md — events.py time alignment):
     # `parse_serial_events` reads the raw device `ts` field. If the DUT has
@@ -119,10 +123,18 @@ def main():
     # Overlay events onto the measurement as logic channels.
     mapper.apply(measurement)
 
-    # Save the annotated capture and the channel legend.
+    # Save the annotated capture. New path: pass scope intervals via the
+    # `events` kwarg and they're embedded as events.json inside the .ppk2
+    # zip — the HTML report then renders them as a "Named scopes" table
+    # without needing a separate sidecar.
     out_ppk2 = OUTPUT_DIR / "annotated.ppk2"
+    scopes = mapper.to_scopes(measurement)
+    save_ppk2(measurement, out_ppk2, events=scopes)
+
+    # The legacy sidecar still works and stays the right choice if you
+    # need the legend in nRF Connect Power Profiler (which can't read
+    # the embedded events).
     out_legend = OUTPUT_DIR / "annotated.ppk2.legend.json"
-    save_ppk2(measurement, out_ppk2)
     mapper.save_legend(out_legend)
 
     print(f"Saved {out_ppk2}")
@@ -133,6 +145,7 @@ def main():
         print(f"  {ch}: {name}")
     print()
     print(f"Events applied: {len(mapper._events)}")
+    print(f"Embedded scopes: {len(scopes)}")
     print(f"Duration:       {measurement.duration_s:.2f} s")
     print(f"Mean current:   {measurement.mean_ua:.0f} µA")
 

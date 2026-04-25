@@ -5,6 +5,8 @@ Python library and CLI for the Nordic Power Profiler Kit II (PPK2).
 Features:
 - **Device control** — source/ampere meter, voltage, DUT power, 100kHz measurement
 - **File I/O** — save/load `.ppk2` files (nRF Connect Power Profiler compatible)
+- **Daemon server** — persistent process holds the PPK2 open so multiple consumers (CLI, scripts, long-running captures) can share a single device without re-enumerating USB
+- **Event annotation** — map DUT firmware trace events (Chrome JSON scopes) onto the PPK2's digital channels D0–D7; overlays named scopes on the power trace for visual correlation
 - **Reporting** — markdown tables, interactive HTML charts, GitHub Actions annotations
 - **Synthetic profiles** — build realistic power profiles programmatically
 - **AI integration** — generate, analyze, and validate profiles using Claude
@@ -14,19 +16,22 @@ Features:
 
 ## Status
 
-| Feature | Design | Docs | Impl | Tests | Examples | Since | Updated |
-|---------|--------|------|------|-------|----------|-------|---------|
-| **Device control** | | | [device.py](src/ppk2/device.py), [transport.py](src/ppk2/transport.py) | [test_device](tests/test_device.py), [test_integration](tests/test_integration.py) | | | |
-| **File I/O** | | | [ppk2file.py](src/ppk2/ppk2file.py), [conversion.py](src/ppk2/conversion.py), [parser.py](src/ppk2/parser.py) | [test_ppk2file](tests/test_ppk2file.py), [test_parser](tests/test_parser.py), [test_conversion](tests/test_conversion.py) | | | |
-| **Reporting** | | | [report.py](src/ppk2/report.py) | [test_report](tests/test_report.py) | | | |
-| **Synthetic profiles** | | | [synthetic.py](src/ppk2/synthetic.py) | [test_synthetic](tests/test_synthetic.py) | | | |
-| **AI integration** | | | [ai.py](src/ppk2/ai.py) | [test_ai](tests/test_ai.py) | | | |
-| **CLI** | | | [cli.py](src/ppk2/cli.py), [commands.py](src/ppk2/commands.py) | [test_commands](tests/test_commands.py) | | | |
-| **Daemon server** | | | [daemon.py](src/ppk2/daemon.py), [client.py](src/ppk2/client.py) | [test_daemon](tests/test_daemon.py) | | | |
-| **Event annotation** | | | [events.py](src/ppk2/events.py), [merge.py](src/ppk2/merge.py) | [test_events](tests/test_events.py), [test_merge](tests/test_merge.py) | [capture_with_events](examples/capture_with_events.py) | | |
-| **Firmware management** | | | [firmware.py](src/ppk2/firmware.py) | [test_firmware](tests/test_firmware.py), [test_cli_firmware](tests/test_cli_firmware.py) | | | |
-| **Desktop automation** | | | [desktop.py](src/ppk2/desktop.py) | | | | |
-| **GitHub Action** | | | [action.yml](action.yml), [action_report.py](action_report.py) | | | | |
+[![CI](https://github.com/m-mcgowan/ppk2-python/actions/workflows/ci.yml/badge.svg)](https://github.com/m-mcgowan/ppk2-python/actions/workflows/ci.yml)
+[Example reports (live)](https://m-mcgowan.github.io/ppk2-python/) · [Workflow runs](https://github.com/m-mcgowan/ppk2-python/actions)
+
+| Feature | Implementation | Tests | Examples |
+|---------|----------------|-------|----------|
+| **Device control** | [device.py](src/ppk2/device.py), [transport.py](src/ppk2/transport.py) | [test_device](tests/test_device.py), [test_integration](tests/test_integration.py) | |
+| **File I/O** | [ppk2file.py](src/ppk2/ppk2file.py), [conversion.py](src/ppk2/conversion.py), [parser.py](src/ppk2/parser.py) | [test_ppk2file](tests/test_ppk2file.py), [test_parser](tests/test_parser.py), [test_conversion](tests/test_conversion.py) | |
+| **Reporting** | [report.py](src/ppk2/report.py) | [test_report](tests/test_report.py) | [generate_reports](examples/generate_reports.py) |
+| **Synthetic profiles** | [synthetic.py](src/ppk2/synthetic.py) | [test_synthetic](tests/test_synthetic.py) | |
+| **AI integration** | [ai.py](src/ppk2/ai.py) | [test_ai](tests/test_ai.py) | |
+| **CLI** | [cli.py](src/ppk2/cli.py), [commands.py](src/ppk2/commands.py) | [test_commands](tests/test_commands.py) | |
+| **Daemon server** | [daemon.py](src/ppk2/daemon.py), [client.py](src/ppk2/client.py) | [test_daemon](tests/test_daemon.py) | |
+| **Event annotation** | [events.py](src/ppk2/events.py), [merge.py](src/ppk2/merge.py) | [test_events](tests/test_events.py), [test_merge](tests/test_merge.py) | [capture_with_events](examples/capture_with_events.py) |
+| **Firmware management** | [firmware.py](src/ppk2/firmware.py) | [test_firmware](tests/test_firmware.py), [test_cli_firmware](tests/test_cli_firmware.py) | |
+| **Desktop automation** | [desktop.py](src/ppk2/desktop.py) | — | |
+| **GitHub Action** | [action.yml](action.yml), [action_report.py](action_report.py) | — | |
 
 ## Installation
 
@@ -124,6 +129,15 @@ mapper = parse_serial_events(dut_serial_output, {"gps": 0, "radio": 1})
 mapper.apply(measurement)          # adds logic bits to each sample
 save_ppk2(measurement, "annotated.ppk2")
 mapper.save_legend("annotated.ppk2.legend.json")
+```
+
+To make the `.ppk2` file self-contained, embed the scope intervals
+inside it. The HTML report will then render them as a "Named scopes"
+table without needing the legend sidecar:
+
+```python
+save_ppk2(measurement, "annotated.ppk2",
+          events=mapper.to_scopes(measurement))
 ```
 
 Events with timestamps outside the capture window are clamped and a
