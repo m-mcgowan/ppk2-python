@@ -30,7 +30,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .types import MeasurementResult, SAMPLES_PER_SECOND
+from .types import MeasurementResult, SAMPLES_PER_SECOND, Scope
 
 logger = logging.getLogger(__name__)
 
@@ -156,14 +156,12 @@ class EventMapper:
 
             sample.logic = current_mask
 
-    def to_scopes(self, result: MeasurementResult) -> list["Scope"]:
+    def to_scopes(self, result: MeasurementResult) -> list[Scope]:
         """Pair B/E transitions into Scope intervals.
 
         Unterminated scopes (a start with no matching stop) are clamped to
         ``result.duration_s`` and logged as a warning.
         """
-        from .types import Scope  # local import to avoid circular at module load
-
         # Walk events in arrival order, pairing each "high" transition with
         # the next "low" transition for the same name. Multiple intervals
         # for the same name produce multiple Scopes.
