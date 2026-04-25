@@ -156,6 +156,64 @@ class EventMapper:
 
             sample.logic = current_mask
 
+    def to_scopes(self, result: MeasurementResult) -> list["Scope"]:
+        """Pair B/E transitions into Scope intervals.
+
+        Unterminated scopes (a start with no matching stop) are clamped to
+        ``result.duration_s`` and logged as a warning.
+        """
+        from .types import Scope  # local import to avoid circular at module load
+
+        # Walk events in arrival order, pairing each "high" transition with
+        # the next "low" transition for the same name. Multiple intervals
+        # for the same name produce multiple Scopes.
+        sorted_events = sorted(self._events, key=lambda e: e.timestamp_s)
+        open_starts: dict[str, _Event] = {}
+        scopes: list[Scope] = []
+
+        for ev in sorted_events:
+            if ev.high:
+                # Treat back-to-back "high" without a "low" as nesting we
+                # don't model — close the previous one at this timestamp.
+                prev = open_starts.get(ev.channel_name)
+                if prev is not None:
+                    scopes.append(Scope(
+                        name=prev.channel_name,
+                        start_s=prev.timestamp_s,
+                        end_s=ev.timestamp_s,
+                        channel=prev.channel_bit,
+                    ))
+                open_starts[ev.channel_name] = ev
+            else:
+                start = open_starts.pop(ev.channel_name, None)
+                if start is None:
+                    # E without a B — ignore; legend.events still records it.
+                    continue
+                scopes.append(Scope(
+                    name=start.channel_name,
+                    start_s=start.timestamp_s,
+                    end_s=ev.timestamp_s,
+                    channel=start.channel_bit,
+                ))
+
+        if open_starts:
+            names = sorted(open_starts.keys())
+            logger.warning(
+                "to_scopes: %d unterminated scope(s) clamped to capture "
+                "duration %.3fs: %s",
+                len(open_starts), result.duration_s, ", ".join(names),
+            )
+            for start in open_starts.values():
+                scopes.append(Scope(
+                    name=start.channel_name,
+                    start_s=start.timestamp_s,
+                    end_s=result.duration_s,
+                    channel=start.channel_bit,
+                ))
+
+        scopes.sort(key=lambda s: s.start_s)
+        return scopes
+
     def legend(self) -> dict:
         """Return the channel legend as a dict.
 

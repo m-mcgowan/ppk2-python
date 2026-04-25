@@ -390,3 +390,69 @@ class TestHtmlReportLegend:
 
         # Without legend, falls back to D0 label
         assert "D0" in html
+
+
+class TestEventMapperToScopes:
+    def test_single_pair_becomes_one_scope(self):
+        from ppk2.types import Scope
+
+        mapper = EventMapper({"gps": 0})
+        result = _make_result(1000)
+        mapper.start("gps", 0.002)
+        mapper.stop("gps", 0.005)
+
+        scopes = mapper.to_scopes(result)
+        assert len(scopes) == 1
+        s = scopes[0]
+        assert isinstance(s, Scope)
+        assert s.name == "gps"
+        assert s.start_s == pytest.approx(0.002)
+        assert s.end_s == pytest.approx(0.005)
+        assert s.channel == 0
+
+    def test_repeated_pairs_become_multiple_scopes(self):
+        mapper = EventMapper({"gps": 0})
+        result = _make_result(2000)
+        mapper.start("gps", 0.001)
+        mapper.stop("gps", 0.003)
+        mapper.start("gps", 0.005)
+        mapper.stop("gps", 0.009)
+
+        scopes = mapper.to_scopes(result)
+        assert len(scopes) == 2
+        assert scopes[0].start_s == pytest.approx(0.001)
+        assert scopes[0].end_s == pytest.approx(0.003)
+        assert scopes[1].start_s == pytest.approx(0.005)
+        assert scopes[1].end_s == pytest.approx(0.009)
+
+    def test_unterminated_scope_clamps_to_duration_and_warns(self, caplog):
+        import logging
+
+        mapper = EventMapper({"gps": 0})
+        result = _make_result(1000)  # duration = 0.01s @ 100kHz
+        mapper.start("gps", 0.002)
+        # No matching stop.
+
+        with caplog.at_level(logging.WARNING, logger="ppk2.events"):
+            scopes = mapper.to_scopes(result)
+
+        assert len(scopes) == 1
+        assert scopes[0].start_s == pytest.approx(0.002)
+        assert scopes[0].end_s == pytest.approx(result.duration_s)
+        assert any("unterminated" in rec.message.lower() for rec in caplog.records)
+
+    def test_none_channel_propagates(self):
+        mapper = EventMapper({"boot": None})
+        result = _make_result(1000)
+        mapper.start("boot", 0.001)
+        mapper.stop("boot", 0.004)
+
+        scopes = mapper.to_scopes(result)
+        assert len(scopes) == 1
+        assert scopes[0].channel is None
+
+    def test_no_events_returns_empty_list(self):
+        mapper = EventMapper({"gps": 0})
+        result = _make_result(1000)
+
+        assert mapper.to_scopes(result) == []
