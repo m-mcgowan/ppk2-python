@@ -18,6 +18,10 @@ Follows [Keep a Changelog](https://keepachangelog.com/) conventions.
 - GitHub Action for CI power profiling reports
 - Embedded scope events in `.ppk2` files (`events.json` ZIP entry) — rendered as a "Named scopes" table in HTML reports
 
+### Changed
+- README restructured: feature list now links to per-feature docs in `docs/`; long sections (AI, firmware, GitHub Action, desktop, file format) factored out
+- Quick Start leads with basic measurement and the daemon (with explanation of the source-meter DTR-on-close limitation) instead of firmware upgrade
+
 ### Fixed
 - Drain serial buffer fully on reconnect
 - Preserve PPK2 state on close
