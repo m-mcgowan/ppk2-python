@@ -213,10 +213,16 @@ class DaemonServer:
 
         def reader_loop():
             while self._state.measuring and self._running:
-                self._forward_samples()
-                # Yield briefly to avoid 100% CPU, but short enough to
-                # keep up with 400KB/s serial data.
-                time.sleep(0.001)
+                # Only yield when there were no bytes to drain. macOS's
+                # `time.sleep(0.001)` rounds up to a scheduler tick — about
+                # 1.3 ms on Intel but ~9 ms on Apple Silicon — so sleeping
+                # unconditionally between drains caused ~63% sample loss on
+                # M1 hardware (the kernel TTY buffer is only ~4 KB, and at
+                # 400 KB/s a 9 ms gap fills it). Busy-loop while data is
+                # flowing; only yield when truly idle. See
+                # docs/daemon_reader_loop_issues.md issue #1.
+                if not self._forward_samples():
+                    time.sleep(0.001)
 
         self._reader_thread = threading.Thread(
             target=reader_loop, daemon=True, name="ppk2-serial-reader"
@@ -438,8 +444,12 @@ class DaemonServer:
             "p99_ua": round(sorted_ua[min(int(n * 0.99), n - 1)], 1),
         }
 
-    def _forward_samples(self) -> None:
+    def _forward_samples(self) -> bool:
         """Read serial data and forward to the streaming client.
+
+        Returns True if any bytes were drained from the serial port,
+        False otherwise. The reader-loop caller uses this to decide
+        whether it can safely yield the CPU.
 
         Called from the reader thread during streaming. Thread-safe:
         grabs a local reference to the client socket and checks
@@ -447,11 +457,13 @@ class DaemonServer:
         """
         raw = self._transport.read_available()
         if not raw:
-            return
+            return False
 
         conn = self._stream_client
         if conn is None or not self._state.measuring:
-            return
+            # We did drain bytes — return True so the caller doesn't sleep
+            # and miss the next batch from the TTY buffer.
+            return True
 
         try:
             # Temporarily set blocking for sendall — the client socket
@@ -487,6 +499,9 @@ class DaemonServer:
         except (BrokenPipeError, ConnectionError, OSError):
             logger.info("Streaming client disconnected")
             self._disconnect_client(conn)
+
+        # Bytes were drained from the serial port — caller must keep draining.
+        return True
 
     def _send_response(self, conn: socket.socket, resp: dict) -> None:
         data = json.dumps(resp).encode() + b"\n"
