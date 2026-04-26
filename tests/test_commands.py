@@ -8,7 +8,6 @@ from ppk2.commands import (
     device_running_set,
     get_metadata,
     regulator_set,
-    reset,
     set_power_mode,
     set_user_gains,
 )
@@ -51,10 +50,6 @@ def test_set_power_mode_ampere():
 
 def test_get_metadata():
     assert get_metadata() == bytes([0x19])
-
-
-def test_reset():
-    assert reset() == bytes([0x20])
 
 
 def test_set_user_gains():

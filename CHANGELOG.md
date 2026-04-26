@@ -23,6 +23,9 @@ Follows [Keep a Changelog](https://keepachangelog.com/) conventions.
 - Quick Start leads with basic measurement and the daemon (with explanation of the source-meter DTR-on-close limitation) instead of firmware upgrade
 - AI default model bumped from `claude-sonnet-4-5-20250929` to `claude-sonnet-4-6` (`generate_profile`, `analyze_profile`, `validate_profile`, and the `--model` argparse defaults)
 
+### Removed
+- Commented out the unused trigger / switch-point / spike-filtering / reset opcodes in `commands.py` (`0x01`, `0x03`, `0x05`, `0x0E`, `0x0F`, `0x12`, `0x15`, `0x16`, `0x20`). Triggering, switch-point hysteresis, and spike filtering are all evaluated host-side in the modern nRF Connect Power Profiler app, and these opcodes were never called in our codebase. Whether the PPK2 firmware still implements them is unverified — the helpers are retained in commented form for reference. `commands.reset` and its test removed
+
 ### Fixed
 - Drain serial buffer fully on reconnect
 - Preserve PPK2 state on close
