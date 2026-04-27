@@ -705,17 +705,45 @@ def _cleanup_stale(serial: str) -> None:
             pass
 
 
+DEFAULT_START_TIMEOUT_S = 30.0
+"""Default seconds the parent waits for the forked daemon's socket to
+appear. Slow USB stacks (notably M1 Mac mini) can take up to ~25s
+between fork and the socket bind. Override per call via
+``start_daemon(timeout_s=...)`` or globally via the
+``PPK2_DAEMON_START_TIMEOUT_S`` environment variable."""
+
+
 def start_daemon(
-    serial: str | None = None, port: str | None = None
+    serial: str | None = None,
+    port: str | None = None,
+    *,
+    timeout_s: float | None = None,
 ) -> tuple[str, int]:
     """Start a daemon for the specified device.
 
     Returns ``(serial_number, daemon_pid)``.
 
+    Args:
+        serial: Optional PPK2 serial number to disambiguate.
+        port: Optional serial port path to disambiguate.
+        timeout_s: Seconds to wait for the daemon's socket to appear
+            after fork. Defaults to ``PPK2_DAEMON_START_TIMEOUT_S`` if
+            set, otherwise :data:`DEFAULT_START_TIMEOUT_S` (30s).
+
     Raises:
         ConnectionError: Device not found or ambiguous.
         RuntimeError: Daemon already running, or failed to start.
     """
+    if timeout_s is None:
+        env_val = os.environ.get("PPK2_DAEMON_START_TIMEOUT_S")
+        if env_val is not None:
+            try:
+                timeout_s = float(env_val)
+            except ValueError:
+                timeout_s = DEFAULT_START_TIMEOUT_S
+        else:
+            timeout_s = DEFAULT_START_TIMEOUT_S
+
     device = resolve_device(serial=serial, port=port)
 
     # Check for existing daemon
@@ -730,17 +758,18 @@ def start_daemon(
     if pid > 0:
         # Parent: wait for socket to appear. The child has to open the
         # PPK2 serial port and complete a metadata handshake before
-        # binding the socket, which on slow USB stacks (M1 Mac mini in
-        # particular) can take up to ~25s. Old timeout was 5s, which
-        # raced with the handshake and left a healthy detached daemon
-        # behind while the parent reported a failure.
+        # binding the socket — on slow USB stacks this can be tens of
+        # seconds, so the wait is configurable rather than hardcoded.
         sock_path = _sock_path(device.serial_number)
-        deadline = time.monotonic() + 30.0
+        deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if sock_path.exists():
                 return (device.serial_number, pid)
             time.sleep(0.1)
-        raise RuntimeError("Daemon failed to start (timeout waiting for socket)")
+        raise RuntimeError(
+            f"Daemon failed to start (timeout after {timeout_s:g}s "
+            f"waiting for socket)"
+        )
 
     # Child: become daemon
     try:

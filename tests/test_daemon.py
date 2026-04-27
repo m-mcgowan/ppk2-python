@@ -16,6 +16,7 @@ import pytest
 
 from ppk2.client import DaemonClient
 from ppk2.daemon import (
+    DEFAULT_START_TIMEOUT_S,
     DaemonServer,
     DeviceState,
     _cleanup_stale,
@@ -23,6 +24,7 @@ from ppk2.daemon import (
     _sock_path,
     find_daemon,
     list_daemons,
+    start_daemon,
     state_dir,
 )
 from ppk2.mock import MockTransport, make_metadata_response
@@ -940,3 +942,64 @@ class TestConcurrentClients:
         # Client 1 reads updated state
         state = c1.status()
         assert state["dut_power"] is False
+
+
+class TestStartDaemonTimeout:
+    """Verify start_daemon's socket-wait timeout is configurable.
+
+    The fork is bypassed by patching os.fork to return a non-zero PID,
+    so the parent path runs without spawning a real daemon. _sock_path
+    points at a path that never appears, so the wait always exhausts
+    and we can read the timeout from the resulting RuntimeError.
+    """
+
+    @staticmethod
+    def _run(*, timeout_s=None, env=None, default=None) -> tuple[float, str]:
+        """Drive start_daemon to its timeout-exhausted RuntimeError and
+        return (elapsed_seconds, error_message)."""
+        env_patch = {} if env is None else {"PPK2_DAEMON_START_TIMEOUT_S": env}
+        # Make resolve_device cheap and predictable
+        fake_device = type("D", (), {
+            "serial_number": "TIMEOUTXX", "port": "/dev/null"
+        })()
+        with patch("ppk2.daemon.resolve_device", return_value=fake_device), \
+             patch("ppk2.daemon.find_daemon", return_value=None), \
+             patch("ppk2.daemon.os.fork", return_value=12345), \
+             patch("ppk2.daemon._sock_path",
+                   return_value=Path("/nonexistent/never/appears.sock")), \
+             patch.dict(os.environ, env_patch, clear=False):
+            # Strip an inherited env var if not under test
+            if env is None and "PPK2_DAEMON_START_TIMEOUT_S" in os.environ:
+                del os.environ["PPK2_DAEMON_START_TIMEOUT_S"]
+            kwargs = {} if timeout_s is None else {"timeout_s": timeout_s}
+            t0 = time.monotonic()
+            with pytest.raises(RuntimeError) as exc:
+                if default is not None:
+                    with patch("ppk2.daemon.DEFAULT_START_TIMEOUT_S", default):
+                        start_daemon(**kwargs)
+                else:
+                    start_daemon(**kwargs)
+            return time.monotonic() - t0, str(exc.value)
+
+    def test_explicit_timeout_kwarg_wins(self):
+        elapsed, msg = self._run(timeout_s=0.2, env="9999")
+        assert 0.2 <= elapsed < 0.6  # poll interval is 0.1s
+        assert "0.2s" in msg
+
+    def test_env_var_used_when_kwarg_missing(self):
+        elapsed, msg = self._run(env="0.3")
+        assert 0.3 <= elapsed < 0.7
+        assert "0.3s" in msg
+
+    def test_default_used_when_no_kwarg_or_env(self):
+        elapsed, msg = self._run(default=0.15)
+        assert 0.15 <= elapsed < 0.5
+        assert "0.15s" in msg
+
+    def test_invalid_env_var_falls_back_to_default(self):
+        elapsed, _ = self._run(env="not-a-number", default=0.2)
+        assert 0.2 <= elapsed < 0.6
+
+    def test_default_constant_is_30s(self):
+        # The package-level default has documented behaviour; pin it.
+        assert DEFAULT_START_TIMEOUT_S == 30.0
