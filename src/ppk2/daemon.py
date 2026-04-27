@@ -119,6 +119,8 @@ class DaemonServer:
         # Reader thread for serial data during streaming
         self._reader_thread: threading.Thread | None = None
         self._reader_lock = threading.Lock()
+        # Lifetime byte counter for the env-gated stream-telemetry log.
+        self._bytes_drained_total: int = 0
 
     def start(self) -> None:
         """Open device, bind socket, enter event loop."""
@@ -217,7 +219,19 @@ class DaemonServer:
             # reference so we can start a fresh one below.
             self._reader_thread = None
 
+        # Telemetry: env-gated so production daemons stay quiet. Every
+        # ~telemetry_s of wallclock, log how many _forward_samples()
+        # iterations had data and the rough bytes/s drained from the
+        # serial port. Diagnoses "stream silently dies" cases — if the
+        # window count is zero, the daemon is healthy but the OS is
+        # delivering no bytes.
+        telemetry_s = float(os.environ.get("PPK2_DAEMON_TELEMETRY_S", "0"))
+
         def reader_loop():
+            last_log = time.monotonic()
+            calls = 0
+            calls_with_data = 0
+            bytes_at_window_start = self._bytes_drained_total
             while self._state.measuring and self._running:
                 # Only yield when there were no bytes to drain. macOS's
                 # `time.sleep(0.001)` rounds up to a scheduler tick — about
@@ -227,8 +241,30 @@ class DaemonServer:
                 # 400 KB/s a 9 ms gap fills it). Busy-loop while data is
                 # flowing; only yield when truly idle. See
                 # docs/daemon_reader_loop_issues.md issue #1.
-                if not self._forward_samples():
+                had_data = self._forward_samples()
+                if not had_data:
                     time.sleep(0.001)
+                if telemetry_s > 0:
+                    calls += 1
+                    if had_data:
+                        calls_with_data += 1
+                    now = time.monotonic()
+                    if now - last_log >= telemetry_s:
+                        bytes_drained = (
+                            self._bytes_drained_total - bytes_at_window_start
+                        )
+                        logger.info(
+                            "stream telemetry: window=%.1fs "
+                            "forwards=%d with_data=%d "
+                            "bytes_drained=%d (%.1f kB/s)",
+                            now - last_log, calls, calls_with_data,
+                            bytes_drained,
+                            bytes_drained / max(now - last_log, 0.001) / 1024,
+                        )
+                        last_log = now
+                        calls = 0
+                        calls_with_data = 0
+                        bytes_at_window_start = self._bytes_drained_total
 
         self._reader_thread = threading.Thread(
             target=reader_loop, daemon=True, name="ppk2-serial-reader"
@@ -479,6 +515,7 @@ class DaemonServer:
         raw = self._transport.read_available()
         if not raw:
             return False
+        self._bytes_drained_total += len(raw)
 
         conn = self._stream_client
         if conn is None or not self._state.measuring:
