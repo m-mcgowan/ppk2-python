@@ -728,9 +728,14 @@ def start_daemon(
     # Fork
     pid = os.fork()
     if pid > 0:
-        # Parent: wait for socket to appear
+        # Parent: wait for socket to appear. The child has to open the
+        # PPK2 serial port and complete a metadata handshake before
+        # binding the socket, which on slow USB stacks (M1 Mac mini in
+        # particular) can take up to ~25s. Old timeout was 5s, which
+        # raced with the handshake and left a healthy detached daemon
+        # behind while the parent reported a failure.
         sock_path = _sock_path(device.serial_number)
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + 30.0
         while time.monotonic() < deadline:
             if sock_path.exists():
                 return (device.serial_number, pid)
