@@ -209,7 +209,13 @@ class DaemonServer:
         """Start a background thread that reads serial data and forwards
         to the streaming client. Runs until _state.measuring is cleared."""
         if self._reader_thread is not None:
-            return
+            if self._reader_thread.is_alive():
+                return
+            # Stale handle from a previous reader that exited on its own
+            # (e.g. after the streaming client disconnected from the
+            # reader thread itself — see `_disconnect_client`). Clear the
+            # reference so we can start a fresh one below.
+            self._reader_thread = None
 
         def reader_loop():
             while self._state.measuring and self._running:
@@ -245,7 +251,11 @@ class DaemonServer:
     def _on_client_data(self, conn: socket.socket) -> None:
         try:
             data = conn.recv(_BUF_SIZE)
-        except ConnectionError:
+        except (ConnectionError, OSError):
+            # OSError("Bad file descriptor") can fire when the reader
+            # thread closed `conn` concurrently — the selector had this
+            # fd queued from a previous wake-up. Treat it as EOF; the
+            # disconnect handler is idempotent.
             data = b""
 
         if not data:
@@ -266,7 +276,18 @@ class DaemonServer:
             if self._state.measuring:
                 self._transport.write(commands.average_stop())
                 self._state.measuring = False
-            self._stop_reader_thread()
+            # `_disconnect_client` may be called from the reader thread
+            # itself when `_forward_samples` catches BrokenPipeError on
+            # `conn.sendall`. In that case we MUST NOT call
+            # `_stop_reader_thread`, because that joins `self._reader_thread`
+            # — which is the current thread — and raises
+            # RuntimeError("cannot join current thread"). Clearing
+            # `_state.measuring` above is enough to make the reader loop
+            # exit on its next iteration. From any other thread, joining
+            # is fine and avoids racing with a fresh `start_measuring`.
+            # See docs/daemon_reader_loop_issues.md issue #2.
+            if threading.current_thread() is not self._reader_thread:
+                self._stop_reader_thread()
             self._stream_client = None
         try:
             self._sel.unregister(conn)

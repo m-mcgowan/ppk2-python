@@ -430,6 +430,81 @@ class TestDaemonMeasurement:
         assert result.min_ua > 0
         assert result.max_ua > 0
 
+    def test_streaming_client_force_disconnect_does_not_self_join(self, harness):
+        """Issue #2 (docs/daemon_reader_loop_issues.md): when the streaming
+        client's recv side dies (kill -9, segfault, hard close), the
+        daemon's `conn.sendall(raw)` raises BrokenPipeError on the reader
+        thread. The reader's BrokenPipe handler must not call
+        `_stop_reader_thread`, because that would `.join(self)` from inside
+        the reader thread and raise RuntimeError("cannot join current
+        thread"), zombieing the daemon. The reader must instead let its
+        own loop exit on the next iteration.
+        """
+        h, sock_path = harness
+
+        # Capture unhandled exceptions from any thread for the duration
+        # of this test.
+        exceptions = []
+        old_hook = threading.excepthook
+
+        def hook(args):
+            exceptions.append(args)
+
+        threading.excepthook = hook
+        try:
+            # Open a streaming consumer; raw mode so MockTransport's
+            # generated sample bytes are forwarded directly.
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(5.0)
+            sock.connect(str(sock_path))
+            sock.sendall(
+                json.dumps({"cmd": "measure_start", "raw": True}).encode()
+                + b"\n"
+            )
+
+            # Read the ack line so we know streaming is live.
+            data = b""
+            while b"\n" not in data:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+            first_line = data.decode("latin-1").split("\n", 1)[0]
+            ack = json.loads(first_line)
+            assert ack["ok"] is True
+
+            # Drain a small amount so we're sure the reader thread is
+            # actively forwarding bytes.
+            sock.recv(8192)
+
+            # Force-close without sending measure_stop. After this the
+            # reader thread's next sendall() will raise BrokenPipeError
+            # — that's the trigger for the bug.
+            sock.close()
+
+            # Give the reader thread several iterations to hit the
+            # disconnect, run the BrokenPipe handler, and (in the bug
+            # case) raise RuntimeError on self-join.
+            time.sleep(0.5)
+        finally:
+            threading.excepthook = old_hook
+
+        # Filter for the specific failure mode this test guards against.
+        self_join = [
+            e for e in exceptions
+            if isinstance(e.exc_value, RuntimeError)
+            and "cannot join current thread" in str(e.exc_value)
+        ]
+        assert not self_join, (
+            f"Reader thread tried to self-join on disconnect: {self_join!r}"
+        )
+
+        # Verify the daemon recovered: a fresh client can issue commands.
+        # If the reader thread's death zombied the daemon, this would hang
+        # or fail because _stream_client wasn't cleared.
+        resp = _send_recv(sock_path, {"cmd": "status"}, timeout=5.0)
+        assert resp["ok"] is True
+
     def test_measure_blocks_second_client(self, harness):
         h, sock_path = harness
         # Start streaming on one connection
