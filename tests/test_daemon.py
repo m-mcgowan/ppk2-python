@@ -84,8 +84,10 @@ class DaemonTestHarness:
         # Create server with mock transport
         self.server = DaemonServer(self.device)
         self.server._transport = self.mock
-        # Skip real _connect_device — set up state manually
-        self.server._connect_device = lambda: None  # type: ignore
+        # Skip the real metadata handshake (which the mock can't satisfy)
+        # but still reopen the mock transport so `acquire` after a `release`
+        # can transition is_open back to True.
+        self.server._connect_device = lambda: self.mock.open()  # type: ignore
         self.server._state = DeviceState(
             serial_number=self.serial,
             port=self.device.port,

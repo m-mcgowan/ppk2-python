@@ -77,6 +77,7 @@ class DeviceState:
     vdd_mv: int = 3700
     dut_power: bool = False
     measuring: bool = False
+    released: bool = False
     started_at: float = field(default_factory=time.monotonic)
 
     @property
@@ -351,6 +352,20 @@ class DaemonServer:
 
     def _dispatch(self, conn: socket.socket, req: dict) -> None:
         cmd = req.get("cmd")
+
+        # Released-state guard: hardware-touching commands fail clearly
+        # rather than racing against a closed transport. The user must
+        # call `acquire` first to reopen the serial port.
+        HARDWARE_CMDS = {
+            "power", "voltage", "mode",
+            "measure", "measure_start", "measure_stop",
+        }
+        if self._state.released and cmd in HARDWARE_CMDS:
+            self._send_response(
+                conn, {"ok": False, "error": "device released"}
+            )
+            return
+
         try:
             if cmd == "power":
                 on = bool(req.get("on", False))
@@ -444,6 +459,32 @@ class DaemonServer:
                 self._send_response(conn, {"ok": True, "stats": stats})
 
             elif cmd == "status":
+                self._send_response(conn, {
+                    "ok": True,
+                    "state": self._state.to_dict(),
+                })
+
+            elif cmd == "release":
+                if not self._state.released:
+                    if self._state.measuring:
+                        try:
+                            self._transport.write(commands.average_stop())
+                        except Exception:
+                            pass
+                        self._state.measuring = False
+                        self._stop_reader_thread()
+                    if self._transport.is_open:
+                        self._transport.close()
+                    self._state.released = True
+                self._send_response(conn, {
+                    "ok": True,
+                    "state": self._state.to_dict(),
+                })
+
+            elif cmd == "acquire":
+                if self._state.released:
+                    self._connect_device()
+                    self._state.released = False
                 self._send_response(conn, {
                     "ok": True,
                     "state": self._state.to_dict(),
