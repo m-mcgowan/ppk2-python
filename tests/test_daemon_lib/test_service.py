@@ -69,6 +69,8 @@ def test_launchd_install_writes_plist_and_bootstraps(tmp_path, monkeypatch):
     assert payload["RunAtLoad"] is True
     assert payload["ThrottleInterval"] == 10
     assert payload["ProgramArguments"][1] == "-u"
+    assert "--serial" in payload["ProgramArguments"]
+    assert "ABC123" in payload["ProgramArguments"]
     # bootout (cleanup) + bootstrap = two calls
     assert run.call_count == 2
 
