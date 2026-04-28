@@ -853,12 +853,166 @@ def cmd_daemon_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_daemon_install(args: argparse.Namespace) -> int:
+    from ._daemon_lib.service import get_service_manager
+    from .daemon import find_daemon
+
+    svc = get_service_manager()
+    if svc is None:
+        print(
+            "Service install not supported on this platform.",
+            file=sys.stderr,
+        )
+        return 2
+    devices = _resolve_lifecycle_targets(args)
+    rc = 0
+    for d in devices:
+        sn = d.serial_number
+        info = find_daemon(serial=sn)
+        if info and not svc.is_installed(sn):
+            print(
+                f"{sn}: forked daemon already running; "
+                f"stop it first (`ppk2 daemon stop --serial {sn}`)",
+                file=sys.stderr,
+            )
+            rc = 1
+            continue
+        try:
+            svc.install(sn)
+            print(f"{sn}: installed and started")
+        except Exception as e:
+            print(f"{sn}: install failed: {e}", file=sys.stderr)
+            rc = 1
+    return rc
+
+
+def cmd_daemon_uninstall(args: argparse.Namespace) -> int:
+    from ._daemon_lib.service import get_service_manager
+    from .transport import resolve_device
+
+    svc = get_service_manager()
+    if svc is None:
+        print(
+            "Service install not supported on this platform.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if getattr(args, "all", False):
+        serials = svc.list_installed()
+        if not serials:
+            print("No installed services.")
+            return 0
+    else:
+        try:
+            d = resolve_device(
+                serial=getattr(args, "serial", None),
+                port=getattr(args, "port", None),
+            )
+            serials = [d.serial_number]
+        except ConnectionError:
+            # Uninstall-by-serial works even if the device is unplugged.
+            if getattr(args, "serial", None):
+                serials = [args.serial]
+            else:
+                raise
+
+    rc = 0
+    for sn in serials:
+        try:
+            svc.uninstall(sn)
+            print(f"{sn}: uninstalled")
+        except Exception as e:
+            print(f"{sn}: uninstall failed: {e}", file=sys.stderr)
+            rc = 1
+    return rc
+
+
+def cmd_daemon_log(args: argparse.Namespace) -> int:
+    import os as _os
+
+    from .daemon import _log_path
+    from .transport import resolve_device
+
+    try:
+        d = resolve_device(
+            serial=getattr(args, "serial", None),
+            port=getattr(args, "port", None),
+        )
+    except ConnectionError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    log = _log_path(d.serial_number)
+    if not log.exists():
+        print(f"No log file: {log}")
+        return 1
+    if getattr(args, "follow", False):
+        _os.execvp("tail", ["tail", "-f", str(log)])
+    print(str(log))
+    return 0
+
+
+def cmd_daemon_release(args: argparse.Namespace) -> int:
+    from .client import DaemonClient
+    from .daemon import find_daemon
+    from .transport import resolve_device
+
+    d = resolve_device(
+        serial=getattr(args, "serial", None),
+        port=getattr(args, "port", None),
+    )
+    info = find_daemon(serial=d.serial_number)
+    if not info:
+        print(
+            f"No daemon running for {d.serial_number}", file=sys.stderr
+        )
+        return 1
+    sn, sock_path = info
+    with DaemonClient(sock_path, sn) as client:
+        resp = client._request({"cmd": "release"})
+    if not resp.get("ok"):
+        print(f"Error: {resp.get('error')}", file=sys.stderr)
+        return 1
+    print(f"{sn}: released (port closed; daemon still running)")
+    return 0
+
+
+def cmd_daemon_acquire(args: argparse.Namespace) -> int:
+    from .client import DaemonClient
+    from .daemon import find_daemon
+    from .transport import resolve_device
+
+    d = resolve_device(
+        serial=getattr(args, "serial", None),
+        port=getattr(args, "port", None),
+    )
+    info = find_daemon(serial=d.serial_number)
+    if not info:
+        print(
+            f"No daemon running for {d.serial_number}", file=sys.stderr
+        )
+        return 1
+    sn, sock_path = info
+    with DaemonClient(sock_path, sn) as client:
+        resp = client._request({"cmd": "acquire"})
+    if not resp.get("ok"):
+        print(f"Error: {resp.get('error')}", file=sys.stderr)
+        return 1
+    print(f"{sn}: acquired (port reopened)")
+    return 0
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     handlers = {
         "run": cmd_daemon_run,
         "start": cmd_daemon_start,
         "stop": cmd_daemon_stop,
         "status": cmd_daemon_status,
+        "install": cmd_daemon_install,
+        "uninstall": cmd_daemon_uninstall,
+        "log": cmd_daemon_log,
+        "release": cmd_daemon_release,
+        "acquire": cmd_daemon_acquire,
     }
     action = getattr(args, "daemon_command", None) or "status"
     return handlers[action](args)
@@ -1061,6 +1215,38 @@ def main() -> int:
     p_dstatus.add_argument(
         "--json", action="store_true", help="JSON output"
     )
+
+    p_dinstall = daemon_sub.add_parser(
+        "install", help="Install as system service"
+    )
+    _daemon_selectors(p_dinstall)
+
+    p_duninstall = daemon_sub.add_parser(
+        "uninstall", help="Remove system service"
+    )
+    _daemon_selectors(p_duninstall)
+
+    p_dlog = daemon_sub.add_parser(
+        "log", help="Show daemon log path or tail"
+    )
+    p_dlog.add_argument("--serial", help="PPK2 serial number")
+    p_dlog.add_argument("--port", help="Serial port path")
+    p_dlog.add_argument(
+        "-f", "--follow", action="store_true",
+        help="tail -f the log",
+    )
+
+    p_drel = daemon_sub.add_parser(
+        "release", help="Release the serial port (keep daemon running)"
+    )
+    p_drel.add_argument("--serial", help="PPK2 serial number")
+    p_drel.add_argument("--port", help="Serial port path")
+
+    p_dacq = daemon_sub.add_parser(
+        "acquire", help="Reacquire the serial port"
+    )
+    p_dacq.add_argument("--serial", help="PPK2 serial number")
+    p_dacq.add_argument("--port", help="Serial port path")
 
     args = parser.parse_args()
     if not args.command:
