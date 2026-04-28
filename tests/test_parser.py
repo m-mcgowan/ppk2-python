@@ -173,6 +173,52 @@ class TestSampleParser:
         parser = SampleParser()
         assert parser.total_dataloss == 0
 
+    def test_invalid_range_idx_treated_as_lost(self):
+        """range_idx 5-7 are reserved; parser should emit None and not crash."""
+        parser = SampleParser()
+        data = (
+            _make_frame(adc=1000, range_idx=2, counter=0, logic=0)
+            + _make_frame(adc=2000, range_idx=5, counter=1, logic=0)  # invalid
+            + _make_frame(adc=3000, range_idx=2, counter=2, logic=0)
+        )
+        results = parser.feed(data)
+        assert len(results) == 3
+        assert results[0] is not None and results[0][0] == 1000 * 4
+        assert results[1] is None  # range 5 → lost
+        assert results[2] is not None and results[2][0] == 3000 * 4
+        assert parser.total_invalid_ranges == 1
+        assert parser.total_dataloss == 0  # invalid range is not counted as dataloss
+
+    def test_invalid_range_idx_does_not_cascade_dataloss(self):
+        """A single corrupt frame should not desync the counter."""
+        parser = SampleParser()
+        data = b""
+        for i in range(10):
+            r = 7 if i == 5 else 1  # one bad frame in the middle
+            data += _make_frame(adc=500, range_idx=r, counter=i, logic=0)
+        results = parser.feed(data)
+        assert len(results) == 10
+        valid = [r for r in results if r is not None]
+        assert len(valid) == 9  # one dropped
+        assert parser.total_invalid_ranges == 1
+        # Counter alignment held → no synthetic dataloss
+        assert parser.total_dataloss == 0
+
+    def test_invalid_range_logging_capped(self):
+        """A flood of invalid range frames should not flood the log."""
+        parser = SampleParser()
+        # 50 corrupt frames in a row
+        data = b"".join(
+            _make_frame(adc=0, range_idx=6, counter=i & 0x3F, logic=0)
+            for i in range(50)
+        )
+        results = parser.feed(data)
+        assert all(r is None for r in results)
+        assert parser.total_invalid_ranges == 50
+        # Logger emissions capped — verified indirectly by checking the gate
+        from ppk2.parser import INVALID_RANGE_LOG_LIMIT
+        assert parser._invalid_range_logged == INVALID_RANGE_LOG_LIMIT
+
 
 class TestMetadataEdgeCases:
     def test_extra_whitespace(self):

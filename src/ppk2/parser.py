@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 MAX_COUNTER = 0x3F  # 6-bit, 0-63
 DATALOSS_THRESHOLD = 500  # ~5ms at 100kHz
+NUM_RANGES = 5  # PPK2 has 5 measurement ranges (0-4); bits encode 3, so 5-7 are reserved
+INVALID_RANGE_LOG_LIMIT = 10  # cap diagnostic log lines to avoid flooding
 
 
 def parse_metadata(raw: str) -> dict:
@@ -42,17 +44,25 @@ class SampleParser:
         self._remainder = b""
         self._expected_counter: int | None = None
         self._dataloss_counter = 0
+        self._invalid_range_counter = 0
+        self._invalid_range_logged = 0
         self._corrupted_buffer: list[tuple[int, int, int, int]] = []
 
     def reset(self) -> None:
         self._remainder = b""
         self._expected_counter = None
         self._dataloss_counter = 0
+        self._invalid_range_counter = 0
+        self._invalid_range_logged = 0
         self._corrupted_buffer.clear()
 
     @property
     def total_dataloss(self) -> int:
         return self._dataloss_counter
+
+    @property
+    def total_invalid_ranges(self) -> int:
+        return self._invalid_range_counter
 
     def feed(self, data: bytes) -> list[tuple[int, int, int, int] | None]:
         """Feed raw bytes, return parsed samples.
@@ -72,6 +82,26 @@ class SampleParser:
             range_idx = (raw >> 14) & 0x7
             counter = (raw >> 18) & 0x3F
             logic = (raw >> 24) & 0xFF
+
+            if range_idx >= NUM_RANGES:
+                # Reserved range bits (5-7) — treat as a lost sample. We do not
+                # feed it through counter resync, but we do advance the
+                # expected counter so a single corrupt frame does not cascade
+                # into a dataloss false-positive.
+                self._invalid_range_counter += 1
+                if self._invalid_range_logged < INVALID_RANGE_LOG_LIMIT:
+                    self._invalid_range_logged += 1
+                    logger.warning(
+                        "Invalid PPK2 range_idx=%d in frame raw=0x%08x "
+                        "(adc=%d counter=%d logic=0x%02x); treating as lost sample",
+                        range_idx, raw, adc, counter, logic,
+                    )
+                results.append(None)
+                if self._expected_counter is not None:
+                    self._expected_counter = (
+                        self._expected_counter + 1
+                    ) & MAX_COUNTER
+                continue
 
             sample = (adc, range_idx, counter, logic)
             resolved = self._check_counter(sample)
