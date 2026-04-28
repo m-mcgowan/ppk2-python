@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "pyserial>=3.5",
-    "embedded-bridge>=0.1.0",
+    "embedded-bridge",
 ]
 
 [project.urls]
