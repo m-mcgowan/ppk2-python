@@ -19,15 +19,86 @@ from pathlib import Path
 from . import firmware
 
 
-def _open_device(port: str | None) -> "PPK2Device":
-    """Open a PPK2 device, with user-friendly error messages."""
+def _open_device(
+    *,
+    port: str | None = None,
+    serial: str | None = None,
+    transport: str = "auto",
+):
+    """Open a PPK2 device, routing through daemon or direct as configured.
+
+    ``transport`` selects the routing policy:
+        - ``"direct"`` — bypass daemon discovery and open the hardware
+          directly via :class:`PPK2Device`. Used when the caller wants
+          to talk to the port even if a daemon is running (interlocks
+          guard the dangerous cases).
+        - ``"daemon"`` — require a running daemon for the resolved
+          device; ``SystemExit(1)`` if none is found.
+        - ``"auto"`` (default) — prefer an existing daemon, otherwise
+          auto-spawn one (Unix) or fall back to direct (Windows).
+
+    Returns either a ``PPK2Device`` (direct) or a ``DaemonClient``;
+    both expose the same measurement API and are context-managers.
+    """
+    from . import daemon as _daemon
+    from . import transport as _transport
     from .device import PPK2Device
 
+    if transport == "direct":
+        try:
+            return PPK2Device.open(port)
+        except ConnectionError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
+    # Need a serial number to look up a daemon — resolve the device first.
     try:
-        return PPK2Device.open(port)
+        device = _transport.resolve_device(port=port, serial=serial)
     except ConnectionError as e:
         print(f"Error: {e}")
         sys.exit(1)
+
+    info = _daemon.find_daemon(serial=device.serial_number)
+    if info is not None:
+        from .client import DaemonClient
+
+        sn, sock_path = info
+        return DaemonClient(sock_path, sn)
+
+    if transport == "daemon":
+        print(
+            f"Error: no daemon running for {device.serial_number}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # transport == "auto" with no daemon: spawn one on Unix, fall back
+    # to direct on Windows (where we don't have fork/launchd integration).
+    if sys.platform == "win32":
+        try:
+            return PPK2Device.open(device.port)
+        except ConnectionError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
+    return _autospawn_daemon(device.serial_number)
+
+
+def _autospawn_daemon(serial: str):
+    """Auto-spawn a daemon for ``serial`` and return a DaemonClient.
+
+    Filled out with file-lock coordination + DFU pre-check in Task 15;
+    for now this is a thin wrapper over ``start_daemon`` + ``find_daemon``.
+    """
+    from .client import DaemonClient
+    from .daemon import find_daemon, start_daemon
+
+    sn, _pid = start_daemon(serial=serial)
+    info = find_daemon(serial=sn)
+    if info is None:
+        raise RuntimeError("Auto-spawned daemon disappeared")
+    sn2, sock_path = info
+    return DaemonClient(sock_path, sn2)
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -47,7 +118,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_power(args: argparse.Namespace) -> int:
     """Toggle DUT power on/off."""
     on = args.state == "on"
-    with _open_device(args.port) as ppk:
+    with _open_device(port=args.port) as ppk:
         ppk.toggle_dut_power(on)
         print(f"DUT power {'ON' if on else 'OFF'}")
     return 0
@@ -55,7 +126,7 @@ def cmd_power(args: argparse.Namespace) -> int:
 
 def cmd_mode(args: argparse.Namespace) -> int:
     """Set PPK2 measurement mode."""
-    with _open_device(args.port) as ppk:
+    with _open_device(port=args.port) as ppk:
         if args.mode == "source":
             ppk.use_source_meter()
             print("Mode: source meter (PPK2 supplies power)")
@@ -67,7 +138,7 @@ def cmd_mode(args: argparse.Namespace) -> int:
 
 def cmd_voltage(args: argparse.Namespace) -> int:
     """Set source voltage in millivolts."""
-    with _open_device(args.port) as ppk:
+    with _open_device(port=args.port) as ppk:
         ppk.set_source_voltage(args.millivolts)
         print(f"Source voltage: {args.millivolts} mV")
     return 0
@@ -77,7 +148,7 @@ def cmd_measure(args: argparse.Namespace) -> int:
     """Take a quick measurement and print stats."""
     from .report import format_current
 
-    with _open_device(args.port) as ppk:
+    with _open_device(port=args.port) as ppk:
         if args.source:
             ppk.use_source_meter()
             ppk.set_source_voltage(args.source)
