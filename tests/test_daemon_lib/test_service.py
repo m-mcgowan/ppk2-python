@@ -97,3 +97,25 @@ def test_launchd_list_installed(tmp_path, monkeypatch):
     (sm.PLIST_DIR / "com.ppk2.daemon.BBB.plist").write_bytes(b"")
     (sm.PLIST_DIR / "com.something.else.plist").write_bytes(b"")
     assert sorted(sm.list_installed()) == ["AAA", "BBB"]
+
+
+def test_launchd_install_raises_when_bootstrap_fails(tmp_path, monkeypatch):
+    """install() must not silently swallow a bootstrap failure."""
+    sm = service.LaunchdManager()
+    monkeypatch.setattr(sm, "PLIST_DIR", tmp_path / "LaunchAgents")
+
+    bootout_ok = MagicMock(returncode=0, stderr=b"")
+    bootstrap_fail = MagicMock(
+        returncode=5,
+        stderr=b"Bootstrap failed: 5: Input/output error",
+    )
+
+    with patch("subprocess.run", side_effect=[bootout_ok, bootstrap_fail]):
+        with pytest.raises(RuntimeError, match="launchctl bootstrap failed"):
+            sm.install("ABC123")
+
+
+def test_resolve_python_returns_sys_executable():
+    """_resolve_python intentionally avoids project-layout coupling."""
+    import sys as _sys
+    assert service._resolve_python() == _sys.executable

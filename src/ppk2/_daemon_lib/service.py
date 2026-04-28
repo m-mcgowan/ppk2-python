@@ -31,16 +31,14 @@ def _program_args(serial: str) -> list[str]:
 
 
 def _resolve_python() -> str:
-    """Find the best Python interpreter to launch the daemon with.
+    """Python interpreter to launch the daemon with.
 
-    Prefer the ppk2-python project's ``.venv/bin/python3`` if present
-    (mirrors how ``usb-device/hub_agent.py`` does it); fall back to
-    ``sys.executable``.
+    Returns ``sys.executable`` so a service installed from a venv stays
+    pinned to that venv's interpreter. A consumer wanting different
+    behaviour (e.g. preferring a project-local ``.venv``) can monkey-
+    patch this function — keeping the resolution logic out of the
+    extracted ``embedded_bridge.daemon`` copy.
     """
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
-    venv_python = project_root / ".venv" / "bin" / "python3"
-    if venv_python.is_file():
-        return str(venv_python)
     return sys.executable
 
 
@@ -96,15 +94,22 @@ class LaunchdManager(ServiceManager):
             plistlib.dump(plist, f)
 
         domain = f"gui/{os.getuid()}"
-        # Idempotent: bootout first (in case it's already loaded), then bootstrap
+        # Idempotent bootout-then-bootstrap. bootout may legitimately fail
+        # ("Service not loaded") on first install, so we don't check it.
         subprocess.run(
             ["launchctl", "bootout", domain, str(plist_path)],
             check=False, capture_output=True,
         )
-        subprocess.run(
+        bootstrap = subprocess.run(
             ["launchctl", "bootstrap", domain, str(plist_path)],
             check=False, capture_output=True,
         )
+        if bootstrap.returncode != 0:
+            stderr = bootstrap.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(
+                f"launchctl bootstrap failed (rc={bootstrap.returncode}): "
+                f"{stderr or 'no error output'}"
+            )
 
     def uninstall(self, serial: str) -> None:
         plist_path = self._plist_path(serial)
@@ -141,6 +146,14 @@ class LaunchdManager(ServiceManager):
         return self._plist_path(serial).exists()
 
     def is_running(self, serial: str) -> bool:
+        """Whether the service is loaded in launchd's user domain.
+
+        Note: ``launchctl print`` returns 0 when the service is loaded,
+        which includes the throttle/restart window after a crash and
+        any ``KeepAlive`` flapping. Callers needing strict "process
+        currently running" semantics should also check the daemon's
+        socket / pid-file directly.
+        """
         rc = subprocess.run(
             ["launchctl", "print", f"gui/{os.getuid()}/{self._label(serial)}"],
             check=False, capture_output=True,
