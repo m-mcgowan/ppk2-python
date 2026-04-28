@@ -739,6 +739,22 @@ def run_daemon(
     stdio redirection. Resolves the device, writes the PID file, and
     enters the server's event loop.
     """
+    # DFU pre-check: if the target serial is enumerating as the PPK2 DFU
+    # bootloader (PID 0x521F), resolve_device wouldn't find it in the
+    # regular device list and would raise the misleading "no PPK2 device
+    # with serial …" error. Surface a clear pointer at abort-dfu instead.
+    if serial:
+        import serial.tools.list_ports as _list_ports
+
+        DFU_VID, DFU_PID = 0x1915, 0x521F
+        for p in _list_ports.comports():
+            if (p.vid == DFU_VID and p.pid == DFU_PID
+                    and p.serial_number == serial):
+                raise RuntimeError(
+                    f"PPK2 {serial} is in DFU bootloader. Run "
+                    f"`ppk2 firmware abort-dfu --serial {serial}` first."
+                )
+
     device = resolve_device(serial=serial, port=port)
     _pid_path(device.serial_number).write_text(str(os.getpid()))
 

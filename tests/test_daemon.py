@@ -1062,6 +1062,28 @@ class TestRunDaemon:
         assert "serial" in sig.parameters
         assert "port" in sig.parameters
 
+    def test_run_daemon_errors_when_device_in_dfu(self, monkeypatch):
+        """If the target serial enumerates as PID 0x521F (DFU bootloader),
+        run_daemon must raise RuntimeError pointing at abort-dfu rather
+        than the misleading "no PPK2 device with serial …" from
+        resolve_device, so the user knows to flash or reboot the unit.
+        """
+        from ppk2 import daemon as d
+
+        fake_dfu = type("P", (), {
+            "vid": 0x1915, "pid": 0x521F,
+            "device": "/dev/cu.fakeDFU", "serial_number": "DFU_SN",
+            "location": "fake",
+        })
+        monkeypatch.setattr(
+            "serial.tools.list_ports.comports", lambda: [fake_dfu]
+        )
+        monkeypatch.setattr(
+            "ppk2.transport.list_ppk2_devices", lambda: []
+        )
+        with pytest.raises(RuntimeError, match="DFU bootloader|abort-dfu"):
+            d.run_daemon(serial="DFU_SN")
+
     def test_run_daemon_fast_exits_when_device_absent(self, monkeypatch):
         """run_daemon must error out fast when the target serial is absent.
 
