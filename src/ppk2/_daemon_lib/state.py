@@ -20,13 +20,28 @@ STATE_DIR_NAME = "ppk2"
 
 
 def state_dir() -> Path:
-    """Return the per-user state directory, creating it if needed."""
+    """Return the per-user state directory, creating it if needed.
+
+    Resolution per platform:
+
+    - Windows: ``%LOCALAPPDATA%\\<STATE_DIR_NAME>``, falling back to
+      ``~/AppData/Local/<STATE_DIR_NAME>`` when ``LOCALAPPDATA`` is unset
+      or empty.
+    - Unix/macOS: ``$XDG_STATE_HOME/<STATE_DIR_NAME>`` per the XDG Base
+      Directory spec, falling back to ``~/.local/state/<STATE_DIR_NAME>``
+      when ``XDG_STATE_HOME`` is unset or empty.
+    """
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA")
         if not base:
             base = str(Path.home() / "AppData" / "Local")
         d = Path(base) / STATE_DIR_NAME
     else:
-        d = Path.home() / ".local" / "state" / STATE_DIR_NAME
+        xdg = os.environ.get("XDG_STATE_HOME")
+        if xdg:
+            base = Path(xdg)
+        else:
+            base = Path.home() / ".local" / "state"
+        d = base / STATE_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
