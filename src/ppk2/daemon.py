@@ -729,6 +729,33 @@ between fork and the socket bind. Override per call via
 ``PPK2_DAEMON_START_TIMEOUT_S`` environment variable."""
 
 
+def run_daemon(
+    serial: str | None = None, port: str | None = None
+) -> None:
+    """Run the daemon in the foreground.
+
+    Single foreground entry shared by ``ppk2 daemon run`` (service-manager
+    invocation) and by the post-fork child of :func:`start_daemon` after
+    stdio redirection. Resolves the device, writes the PID file, and
+    enters the server's event loop.
+    """
+    device = resolve_device(serial=serial, port=port)
+    _pid_path(device.serial_number).write_text(str(os.getpid()))
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        stream=sys.stderr,
+    )
+
+    server = DaemonServer(device)
+    try:
+        server.start()
+    except Exception:
+        logging.exception("Daemon failed")
+        raise
+
+
 def start_daemon(
     serial: str | None = None,
     port: str | None = None,
@@ -787,34 +814,23 @@ def start_daemon(
             f"waiting for socket)"
         )
 
-    # Child: become daemon
+    # Child: detach, redirect stdio to the log file, then call the same
+    # foreground entry that ``ppk2 daemon run`` uses (service managers
+    # invoke run_daemon directly and don't fork).
     try:
         os.setsid()
 
-        # Write PID file
-        _pid_path(device.serial_number).write_text(str(os.getpid()))
-
-        # Redirect stdout/stderr to log
         log_path = _log_path(device.serial_number)
         log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
         os.dup2(log_fd, 1)
         os.dup2(log_fd, 2)
         os.close(log_fd)
 
-        # Close stdin
         devnull = os.open(os.devnull, os.O_RDONLY)
         os.dup2(devnull, 0)
         os.close(devnull)
 
-        # Set up logging to stderr (which is now the log file)
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(message)s",
-            stream=sys.stderr,
-        )
-
-        server = DaemonServer(device)
-        server.start()
+        run_daemon(serial=device.serial_number)
     except Exception:
         logging.exception("Daemon failed")
     finally:

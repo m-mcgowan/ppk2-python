@@ -1046,3 +1046,18 @@ class TestStartDaemonTimeout:
     def test_default_constant_is_30s(self):
         # The package-level default has documented behaviour; pin it.
         assert DEFAULT_START_TIMEOUT_S == 30.0
+
+
+class TestRunDaemon:
+    def test_run_daemon_is_callable_in_foreground(self):
+        """run_daemon must be importable from ppk2.daemon and accept
+        (serial=, port=) kwargs so service-manager invocations and the
+        forked child of start_daemon share a single foreground entry.
+        """
+        import inspect
+
+        from ppk2.daemon import run_daemon
+
+        sig = inspect.signature(run_daemon)
+        assert "serial" in sig.parameters
+        assert "port" in sig.parameters
