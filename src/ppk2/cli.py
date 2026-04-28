@@ -1018,6 +1018,23 @@ def cmd_daemon_measure(args: argparse.Namespace) -> int:
     return cmd_measure_impl(args, transport="daemon")
 
 
+def cmd_direct(args: argparse.Namespace) -> int:
+    handlers = {
+        "power": lambda a: cmd_power_impl(a, transport="direct"),
+        "voltage": lambda a: cmd_voltage_impl(a, transport="direct"),
+        "mode": lambda a: cmd_mode_impl(a, transport="direct"),
+        "measure": lambda a: cmd_measure_impl(a, transport="direct"),
+    }
+    action = getattr(args, "direct_command", None)
+    if not action:
+        print(
+            "Specify a subcommand: power, voltage, mode, measure",
+            file=sys.stderr,
+        )
+        return 1
+    return handlers[action](args)
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     handlers = {
         "run": cmd_daemon_run,
@@ -1302,6 +1319,35 @@ def main() -> int:
     p_dmeas.add_argument("--source", type=int, metavar="MV")
     p_dmeas.add_argument("-o", "--output")
 
+    # ppk2 direct ... — operational verbs pinned to transport="direct".
+    p_direct = sub.add_parser(
+        "direct",
+        help="Bypass daemon, open serial port directly",
+    )
+    direct_sub = p_direct.add_subparsers(dest="direct_command")
+
+    p_xpwr = direct_sub.add_parser("power")
+    p_xpwr.add_argument("state", choices=["on", "off"])
+    p_xpwr.add_argument("--port")
+    p_xpwr.add_argument("--serial")
+
+    p_xvolt = direct_sub.add_parser("voltage")
+    p_xvolt.add_argument("millivolts", type=int)
+    p_xvolt.add_argument("--port")
+    p_xvolt.add_argument("--serial")
+
+    p_xmode = direct_sub.add_parser("mode")
+    p_xmode.add_argument("mode", choices=["source", "ampere"])
+    p_xmode.add_argument("--port")
+    p_xmode.add_argument("--serial")
+
+    p_xmeas = direct_sub.add_parser("measure")
+    p_xmeas.add_argument("duration", type=float)
+    p_xmeas.add_argument("--port")
+    p_xmeas.add_argument("--serial")
+    p_xmeas.add_argument("--source", type=int, metavar="MV")
+    p_xmeas.add_argument("-o", "--output")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -1322,6 +1368,7 @@ def main() -> int:
         "merge": cmd_merge,
         "firmware": _cmd_firmware_dispatch,
         "daemon": cmd_daemon,
+        "direct": cmd_direct,
     }
     return handlers[args.command](args)
 
