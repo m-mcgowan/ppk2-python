@@ -1002,6 +1002,22 @@ def cmd_daemon_acquire(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_daemon_power(args: argparse.Namespace) -> int:
+    return cmd_power_impl(args, transport="daemon")
+
+
+def cmd_daemon_voltage(args: argparse.Namespace) -> int:
+    return cmd_voltage_impl(args, transport="daemon")
+
+
+def cmd_daemon_mode(args: argparse.Namespace) -> int:
+    return cmd_mode_impl(args, transport="daemon")
+
+
+def cmd_daemon_measure(args: argparse.Namespace) -> int:
+    return cmd_measure_impl(args, transport="daemon")
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     handlers = {
         "run": cmd_daemon_run,
@@ -1013,6 +1029,10 @@ def cmd_daemon(args: argparse.Namespace) -> int:
         "log": cmd_daemon_log,
         "release": cmd_daemon_release,
         "acquire": cmd_daemon_acquire,
+        "power": cmd_daemon_power,
+        "voltage": cmd_daemon_voltage,
+        "mode": cmd_daemon_mode,
+        "measure": cmd_daemon_measure,
     }
     action = getattr(args, "daemon_command", None) or "status"
     return handlers[action](args)
@@ -1247,6 +1267,40 @@ def main() -> int:
     )
     p_dacq.add_argument("--serial", help="PPK2 serial number")
     p_dacq.add_argument("--port", help="Serial port path")
+
+    # Operational aliases under `ppk2 daemon` — same verbs as the
+    # top-level commands but pinned to `transport="daemon"`. Mirrors
+    # the layout of `ppk2 direct ...` (Task 21) so users can pick a
+    # transport explicitly without remembering --daemon/--direct flags.
+    p_dpwr = daemon_sub.add_parser(
+        "power", help="Set DUT power (require daemon)"
+    )
+    p_dpwr.add_argument("state", choices=["on", "off"])
+    p_dpwr.add_argument("--port")
+    p_dpwr.add_argument("--serial")
+
+    p_dvolt = daemon_sub.add_parser(
+        "voltage", help="Set source voltage (require daemon)"
+    )
+    p_dvolt.add_argument("millivolts", type=int)
+    p_dvolt.add_argument("--port")
+    p_dvolt.add_argument("--serial")
+
+    p_dmode = daemon_sub.add_parser(
+        "mode", help="Set mode (require daemon)"
+    )
+    p_dmode.add_argument("mode", choices=["source", "ampere"])
+    p_dmode.add_argument("--port")
+    p_dmode.add_argument("--serial")
+
+    p_dmeas = daemon_sub.add_parser(
+        "measure", help="Measure (require daemon)"
+    )
+    p_dmeas.add_argument("duration", type=float)
+    p_dmeas.add_argument("--port")
+    p_dmeas.add_argument("--serial")
+    p_dmeas.add_argument("--source", type=int, metavar="MV")
+    p_dmeas.add_argument("-o", "--output")
 
     args = parser.parse_args()
     if not args.command:
