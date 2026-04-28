@@ -31,6 +31,59 @@ def test_open_device_daemon_errors_when_no_daemon(monkeypatch):
         cli._open_device(port=None, serial="SN", transport="daemon")
 
 
+def test_autospawn_holds_flock_during_spawn(monkeypatch, tmp_path):
+    """Concurrent auto-spawn for the same serial must serialise via flock.
+
+    The lock file's existence is the testable side-effect — the second
+    branch of find_daemon (which returns the fake info post-spawn) is
+    what the with-block returns.
+    """
+    monkeypatch.setattr(
+        "ppk2._daemon_lib.state.state_dir", lambda: tmp_path
+    )
+    spawn_calls = []
+    monkeypatch.setattr(
+        "ppk2.daemon.start_daemon",
+        lambda **kw: spawn_calls.append(kw) or ("SN", 12345),
+    )
+    fake_info = ("SN", tmp_path / "SN.sock")
+    state = {"calls": 0}
+
+    def fake_find(**kw):
+        state["calls"] += 1
+        return None if state["calls"] == 1 else fake_info
+
+    monkeypatch.setattr("ppk2.daemon.find_daemon", fake_find)
+    monkeypatch.setattr(
+        "serial.tools.list_ports.comports", lambda: []
+    )
+    monkeypatch.setattr(
+        "ppk2.client.DaemonClient", lambda *a, **k: MagicMock()
+    )
+
+    cli._autospawn_daemon("SN")
+    assert len(spawn_calls) == 1
+    assert (tmp_path / "SN.spawn.lock").exists()
+
+
+def test_autospawn_errors_when_device_in_dfu(monkeypatch, tmp_path):
+    """DFU pre-check in the CLI mirrors the daemon-side check so the
+    user gets a clear pointer at abort-dfu before any spawn attempt."""
+    monkeypatch.setattr(
+        "ppk2._daemon_lib.state.state_dir", lambda: tmp_path
+    )
+    fake_dfu = type("P", (), {
+        "vid": 0x1915, "pid": 0x521F,
+        "device": "/dev/cu.fakeDFU", "serial_number": "DFU_SN",
+        "location": "fake",
+    })
+    monkeypatch.setattr(
+        "serial.tools.list_ports.comports", lambda: [fake_dfu]
+    )
+    with pytest.raises(SystemExit):
+        cli._autospawn_daemon("DFU_SN")
+
+
 def test_open_device_auto_uses_daemon_when_running(monkeypatch, tmp_path):
     """transport='auto' must prefer an existing daemon over a fresh
     direct connect, so concurrent CLI invocations cooperate via a single

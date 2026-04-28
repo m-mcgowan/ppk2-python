@@ -87,18 +87,48 @@ def _open_device(
 def _autospawn_daemon(serial: str):
     """Auto-spawn a daemon for ``serial`` and return a DaemonClient.
 
-    Filled out with file-lock coordination + DFU pre-check in Task 15;
-    for now this is a thin wrapper over ``start_daemon`` + ``find_daemon``.
+    Concurrent CLI invocations for the same device race to spawn. A
+    per-serial lock file (``<state_dir>/<SERIAL>.spawn.lock``) flocks
+    them into a single winner; later contenders re-check ``find_daemon``
+    and reuse the spawned daemon's socket.
+
+    DFU pre-check runs before the spawn attempt so a unit stuck in
+    bootloader fails fast with a pointer at ``abort-dfu`` rather than
+    surfacing a misleading "no PPK2 device" error from resolve_device.
     """
+    import fcntl
+
+    import serial.tools.list_ports as _list_ports
+
+    from ._daemon_lib.state import state_dir
     from .client import DaemonClient
     from .daemon import find_daemon, start_daemon
 
-    sn, _pid = start_daemon(serial=serial)
-    info = find_daemon(serial=sn)
-    if info is None:
-        raise RuntimeError("Auto-spawned daemon disappeared")
-    sn2, sock_path = info
-    return DaemonClient(sock_path, sn2)
+    DFU_VID, DFU_PID = 0x1915, 0x521F
+    for p in _list_ports.comports():
+        if (p.vid == DFU_VID and p.pid == DFU_PID
+                and p.serial_number == serial):
+            print(
+                f"Error: PPK2 {serial} is in DFU bootloader. Run "
+                f"`ppk2 firmware abort-dfu --serial {serial}` first.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+    lock_path = state_dir() / f"{serial}.spawn.lock"
+    lock_path.touch()
+    with open(lock_path) as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        # Race-check: another contender may have spawned the daemon
+        # while we waited for the lock.
+        info = find_daemon(serial=serial)
+        if info is None:
+            sn, _pid = start_daemon(serial=serial)
+            info = find_daemon(serial=sn)
+            if info is None:
+                raise RuntimeError("Auto-spawned daemon disappeared")
+        sn, sock_path = info
+        return DaemonClient(sock_path, sn)
 
 
 def cmd_list(args: argparse.Namespace) -> int:
