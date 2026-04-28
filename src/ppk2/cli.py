@@ -45,6 +45,24 @@ def _open_device(
     from .device import PPK2Device
 
     if transport == "direct":
+        # Interlock: refuse to bypass a running daemon — opening the
+        # serial port directly while the daemon owns it would race on
+        # writes and corrupt streaming. Skipped when no selector was
+        # given (legacy `with _open_device(port=None)` from older code).
+        if serial or port:
+            try:
+                d = _transport.resolve_device(port=port, serial=serial)
+                if _daemon.find_daemon(serial=d.serial_number):
+                    print(
+                        f"Error: a daemon owns {d.serial_number}. Use "
+                        f"`ppk2 daemon release` or `ppk2 daemon stop` first.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+            except ConnectionError:
+                # No device — fall through; PPK2Device.open will surface
+                # a friendlier error than the interlock could.
+                pass
         try:
             return PPK2Device.open(port)
         except ConnectionError as e:
@@ -602,6 +620,20 @@ def cmd_firmware_upgrade(args: argparse.Namespace) -> int:
         except ConnectionError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 2
+
+    # Interlock: a running daemon holds the port open. nrfutil would
+    # fail with an opaque "device busy" error. Surface a clear pointer
+    # at `ppk2 daemon stop` instead. Inserted before the pre-flash
+    # version probe so the user doesn't see a stale-handle error first.
+    from .daemon import find_daemon
+
+    if find_daemon(serial=serial):
+        print(
+            f"Error: a daemon is running for {serial}. "
+            f"Stop it first: `ppk2 daemon stop --serial {serial}`",
+            file=sys.stderr,
+        )
+        return 1
 
     # Pre-flash version (best-effort).
     pre_info = None
