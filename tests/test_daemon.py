@@ -1061,3 +1061,24 @@ class TestRunDaemon:
         sig = inspect.signature(run_daemon)
         assert "serial" in sig.parameters
         assert "port" in sig.parameters
+
+    def test_run_daemon_fast_exits_when_device_absent(self, monkeypatch):
+        """run_daemon must error out fast when the target serial is absent.
+
+        Pins the property that resolve_device raises before any
+        metadata-read timeout fires. Without the fast-exit, an installed
+        launchd job with the device unplugged would block ~25s per
+        retry, filling the log with timeout spam.
+        """
+        from ppk2 import daemon as d
+
+        monkeypatch.setattr(
+            "ppk2.transport.list_ppk2_devices", lambda: []
+        )
+        t0 = time.monotonic()
+        with pytest.raises(ConnectionError):
+            d.run_daemon(serial="ABSENT_SN")
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1.0, (
+            f"run_daemon took {elapsed:.2f}s — should be fast"
+        )
