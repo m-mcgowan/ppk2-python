@@ -790,9 +790,23 @@ def cmd_daemon_start(args: argparse.Namespace) -> int:
 
 
 def cmd_daemon_stop(args: argparse.Namespace) -> int:
+    """Stop a daemon, escalating from graceful shutdown to SIGTERM to SIGKILL.
+
+    For service-managed daemons, dispatch to the service manager and let
+    it own the lifecycle. For forked daemons, attempt a graceful IPC
+    shutdown first; if the process doesn't exit within 5s escalate to
+    SIGTERM (2s window) then SIGKILL. State files are cleaned up only
+    after the process is confirmed gone.
+    """
+    import os as _os
+    import signal as _sig
+    import time as _time
+
     from ._daemon_lib.service import get_service_manager
     from .client import DaemonClient
-    from .daemon import find_daemon, list_daemons
+    from .daemon import (
+        _cleanup_stale, find_daemon, list_daemons, pid_alive, pid_path,
+    )
 
     svc = get_service_manager()
 
@@ -805,7 +819,7 @@ def cmd_daemon_stop(args: argparse.Namespace) -> int:
         )
         targets = [info] if info else []
 
-    if not targets and not (svc and svc.list_installed()):
+    if not targets:
         print("No daemons running.")
         return 1
 
@@ -814,14 +828,57 @@ def cmd_daemon_stop(args: argparse.Namespace) -> int:
         if svc and svc.is_installed(sn):
             svc.stop(sn)
             print(f"{sn}: stopped (service)")
-        else:
-            try:
-                client = DaemonClient(sock_path, sn)
+            continue
+
+        # Forked daemon: graceful → SIGTERM → SIGKILL escalation.
+        try:
+            pid = int(pid_path(sn).read_text().strip())
+        except Exception:
+            print(f"{sn}: pid file unreadable; cleaning state files")
+            _cleanup_stale(sn)
+            continue
+
+        try:
+            with DaemonClient(sock_path, sn) as client:
                 client.shutdown()
-                print(f"{sn}: stopped")
-            except Exception as e:
-                print(f"{sn}: error stopping: {e}", file=sys.stderr)
-                rc = 1
+        except Exception:
+            pass
+
+        deadline = _time.monotonic() + 5.0
+        while _time.monotonic() < deadline:
+            if not pid_alive(pid):
+                break
+            _time.sleep(0.1)
+
+        if pid_alive(pid):
+            print(f"{sn}: shutdown timed out, sending SIGTERM")
+            try:
+                _os.kill(pid, _sig.SIGTERM)
+            except OSError:
+                pass
+            deadline = _time.monotonic() + 2.0
+            while _time.monotonic() < deadline:
+                if not pid_alive(pid):
+                    break
+                _time.sleep(0.1)
+
+        if pid_alive(pid):
+            print(f"{sn}: still alive, sending SIGKILL")
+            try:
+                _os.kill(pid, _sig.SIGKILL)
+            except OSError:
+                pass
+
+        if pid_alive(pid):
+            print(
+                f"{sn}: failed to stop (pid {pid} still alive)",
+                file=sys.stderr,
+            )
+            rc = 1
+            continue
+
+        _cleanup_stale(sn)
+        print(f"{sn}: stopped")
     return rc
 
 
