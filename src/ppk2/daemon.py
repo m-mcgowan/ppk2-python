@@ -658,7 +658,12 @@ class DaemonServer:
             self._server_sock.close()
 
         self._sel.close()
-        logger.info("Daemon stopped")
+        logger.info(
+            "Daemon stopped: serial=%s port=%s uptime=%.1fs",
+            self._state.serial_number,
+            self._state.port,
+            self._state.uptime_s,
+        )
 
 
 class DaemonNotRunning(ConnectionError):
