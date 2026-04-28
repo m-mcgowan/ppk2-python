@@ -26,6 +26,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from embedded_bridge.framing.message import MessageReader, MessageWriter
+
 from . import commands
 from ._daemon_lib import ipc as _ipc
 from ._daemon_lib.state import state_dir
@@ -117,6 +119,10 @@ class DaemonServer:
         self._reader_lock = threading.Lock()
         # Lifetime byte counter for the env-gated stream-telemetry log.
         self._bytes_drained_total: int = 0
+        # MessageWriter for application-layer framed responses.
+        self._writer = MessageWriter()
+        # Per-connection MessageReader, keyed by socket fd.
+        self._readers: dict[int, MessageReader] = {}
 
     def start(self) -> None:
         """Open device, bind socket, enter event loop."""
@@ -273,6 +279,7 @@ class DaemonServer:
         conn, _ = sock.accept()
         conn.setblocking(False)
         self._sel.register(conn, selectors.EVENT_READ, self._on_client_data)
+        self._readers[conn.fileno()] = MessageReader()
 
     def _on_client_data(self, conn: socket.socket) -> None:
         try:
@@ -288,13 +295,33 @@ class DaemonServer:
             self._disconnect_client(conn)
             return
 
-        try:
-            request = json.loads(data.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            self._send_response(conn, {"ok": False, "error": str(e)})
+        reader = self._readers.get(conn.fileno())
+        if reader is None:
+            # Connection registered without a reader — defensive.
+            self._disconnect_client(conn)
             return
 
-        self._dispatch(conn, request)
+        try:
+            reader.feed(data)
+        except Exception as e:
+            self._send_response(
+                conn, {"ok": False, "error": f"frame error: {e}"}
+            )
+            return
+
+        for msg in reader.drain():
+            if not isinstance(msg, str):
+                self._send_response(conn, {
+                    "ok": False,
+                    "error": "binary messages are not accepted inbound",
+                })
+                continue
+            try:
+                request = json.loads(msg)
+            except json.JSONDecodeError as e:
+                self._send_response(conn, {"ok": False, "error": str(e)})
+                continue
+            self._dispatch(conn, request)
 
     def _disconnect_client(self, conn: socket.socket) -> None:
         # If this was the streaming client, stop measuring and reader thread
@@ -319,6 +346,7 @@ class DaemonServer:
             self._sel.unregister(conn)
         except (KeyError, ValueError):
             pass
+        self._readers.pop(conn.fileno(), None)
         conn.close()
 
     def _dispatch(self, conn: socket.socket, req: dict) -> None:
@@ -520,12 +548,11 @@ class DaemonServer:
             conn.setblocking(True)
             try:
                 if self._stream_raw:
-                    # Raw mode: forward bytes as-is
-                    conn.sendall(raw)
+                    # Raw mode: forward bytes as a binary message
+                    conn.sendall(self._writer.write_binary(raw))
                 else:
-                    # JSON mode: decode and send JSON lines
+                    # JSON mode: one text message per decoded sample line
                     parsed = self._parser.feed(raw)
-                    lines = []
                     for frame in parsed:
                         if frame is None:
                             continue
@@ -535,13 +562,12 @@ class DaemonServer:
                             self._state.vdd_mv,
                         )
                         current = self._spike_filter.process(current, range_idx)
-                        lines.append(json.dumps({
+                        line = json.dumps({
                             "ua": round(current, 1),
                             "range": range_idx,
                             "logic": logic,
-                        }))
-                    if lines:
-                        conn.sendall(("\n".join(lines) + "\n").encode())
+                        })
+                        conn.sendall(self._writer.write_text(line))
             finally:
                 conn.setblocking(False)
         except (BrokenPipeError, ConnectionError, OSError):
@@ -552,7 +578,7 @@ class DaemonServer:
         return True
 
     def _send_response(self, conn: socket.socket, resp: dict) -> None:
-        data = json.dumps(resp).encode() + b"\n"
+        data = self._writer.write_text(json.dumps(resp))
         try:
             conn.sendall(data)
         except (BrokenPipeError, ConnectionResetError) as e:

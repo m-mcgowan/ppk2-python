@@ -10,6 +10,9 @@ import logging
 import socket
 from pathlib import Path
 
+from embedded_bridge.framing.message import MessageReader, MessageWriter
+
+from ._daemon_lib import ipc as _ipc
 from .conversion import SpikeFilter, adc_to_microamps
 from .daemon import find_daemon, list_daemons, state_dir
 from .parser import SampleParser
@@ -29,13 +32,21 @@ class DaemonClient:
     need to know which backend is in use.
     """
 
-    def __init__(self, socket_path: Path, serial_number: str):
+    def __init__(
+        self, socket_path: Path | None, serial_number: str
+    ):
+        # ``socket_path`` is retained for backwards compatibility; routing
+        # is now serial-keyed via ``_daemon_lib.ipc.connect_to`` so the path
+        # itself is never used for connect.
         self._socket_path = socket_path
         self._serial_number = serial_number
         self._vdd_mv = 3700
         self._metadata: dict | None = None
         # Persistent connection for streaming
         self._stream_sock: socket.socket | None = None
+        self._stream_reader: MessageReader | None = None
+        # Binary frames that arrived before the start_measuring ack.
+        self._pending_binary: list[bytes] = []
 
     def __enter__(self) -> "DaemonClient":
         return self
@@ -45,23 +56,30 @@ class DaemonClient:
 
     def _request(self, req: dict, timeout: float = _RECV_TIMEOUT) -> dict:
         """Send a JSON request to the daemon and return the response."""
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
+        sock = _ipc.connect_to(self._serial_number, timeout=timeout)
+        writer = MessageWriter()
+        reader = MessageReader()
         try:
-            sock.connect(str(self._socket_path))
-            sock.sendall(json.dumps(req).encode() + b"\n")
-            data = b""
-            while b"\n" not in data:
+            sock.sendall(writer.write_text(json.dumps(req)))
+            while True:
                 chunk = sock.recv(_BUF_SIZE)
                 if not chunk:
-                    break
-                data += chunk
-            resp = json.loads(data.decode("utf-8"))
-            # Update local state cache
-            if "state" in resp:
-                self._vdd_mv = resp["state"].get("vdd_mv", self._vdd_mv)
-                self._metadata = resp.get("state")
-            return resp
+                    raise ConnectionError(
+                        "daemon closed connection before response"
+                    )
+                reader.feed(chunk)
+                for msg in reader.drain():
+                    if not isinstance(msg, str):
+                        # Binary on a control connection is unexpected;
+                        # ignore and keep draining for the text response.
+                        continue
+                    resp = json.loads(msg)
+                    if "state" in resp:
+                        self._vdd_mv = resp["state"].get(
+                            "vdd_mv", self._vdd_mv
+                        )
+                        self._metadata = resp.get("state")
+                    return resp
         finally:
             sock.close()
 
@@ -143,37 +161,48 @@ class DaemonClient:
             # Never block a measurement on a status probe failing.
             pass
 
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock = _ipc.connect_to(self._serial_number, timeout=_RECV_TIMEOUT)
+        writer = MessageWriter()
+        self._stream_reader = MessageReader()
+        sock.sendall(writer.write_text(json.dumps({
+            "cmd": "measure_start", "raw": True,
+        })))
+        # Drain framed messages until the text ack arrives. In raw mode the
+        # daemon may emit binary sample frames before the ack lands; buffer
+        # any such frames for the first read_available() call.
         sock.settimeout(_RECV_TIMEOUT)
-        sock.connect(str(self._socket_path))
-        sock.sendall(json.dumps({
-            "cmd": "measure_start", "raw": True
-        }).encode() + b"\n")
-        # Read ack — only parse the first line. In raw mode the daemon
-        # may already be forwarding binary sample bytes after the ack,
-        # so we must not assume the entire buffer is valid UTF-8.
-        data = b""
-        while b"\n" not in data:
+        ack: dict | None = None
+        while ack is None:
             chunk = sock.recv(_BUF_SIZE)
             if not chunk:
-                break
-            data += chunk
-        first_line, _, leftover = data.partition(b"\n")
-        resp = json.loads(first_line.decode("utf-8"))
-        if not resp.get("ok"):
+                sock.close()
+                self._stream_reader = None
+                raise ConnectionError("daemon closed before ack")
+            self._stream_reader.feed(chunk)
+            for msg in self._stream_reader.drain():
+                if isinstance(msg, str):
+                    ack = json.loads(msg)
+                    break
+                self._pending_binary.append(msg)
+
+        if not ack.get("ok"):
             sock.close()
-            raise RuntimeError(resp.get("error", "Failed to start streaming"))
+            self._stream_reader = None
+            self._pending_binary = []
+            raise RuntimeError(
+                ack.get("error", "Failed to start streaming")
+            )
 
         # Set up local parsing with calibration from daemon
         self._parser = SampleParser()
         self._spike_filter = SpikeFilter()
         self._modifiers = Modifiers()
-        mods = resp.get("modifiers")
+        mods = ack.get("modifiers")
         if mods:
             for key in ("r", "gs", "gi", "o", "s", "i", "ug"):
                 if key in mods:
                     setattr(self._modifiers, key, list(mods[key]))
-        self._stream_vdd_mv = resp.get("vdd_mv", self._vdd_mv)
+        self._stream_vdd_mv = ack.get("vdd_mv", self._vdd_mv)
 
         # Enlarge socket receive buffer — at 100kHz the daemon produces
         # ~400KB/s of raw sample data. A large buffer prevents overflow
@@ -184,8 +213,6 @@ class DaemonClient:
             pass
 
         self._stream_sock = sock
-        # Feed any leftover bytes that arrived after the ack line
-        self._leftover = leftover
 
         # Belt-and-braces: if the consumer process exits without calling
         # stop_measuring (kill -9, uncaught exception, parent shell exit),
@@ -212,44 +239,64 @@ class DaemonClient:
             return None
         # No longer need the atexit safety net once a graceful stop has run.
         atexit.unregister(self._atexit_stop)
+        writer = MessageWriter()
         try:
-            self._stream_sock.sendall(
-                json.dumps({"cmd": "measure_stop"}).encode() + b"\n"
-            )
-            data = b""
             self._stream_sock.settimeout(5.0)
-            while b"\n" not in data:
+            self._stream_sock.sendall(
+                writer.write_text(json.dumps({"cmd": "measure_stop"}))
+            )
+            # Drain remaining binary frames until the text ack arrives.
+            ack: dict | None = None
+            while ack is None and self._stream_reader is not None:
                 chunk = self._stream_sock.recv(_BUF_SIZE)
                 if not chunk:
                     break
-                data += chunk
-            if data:
-                return json.loads(data.decode("utf-8"))
+                self._stream_reader.feed(chunk)
+                for msg in self._stream_reader.drain():
+                    if isinstance(msg, str):
+                        ack = json.loads(msg)
+                        break
+            return ack
         except Exception:
-            pass
+            return None
         finally:
             self._stream_sock.close()
             self._stream_sock = None
-        return None
+            self._stream_reader = None
+            self._pending_binary = []
 
     def read_available(self) -> bytes:
-        """Read raw bytes from the streaming connection (raw mode).
+        """Drain raw PPK2 sample bytes from the streaming connection.
 
-        Drains all available data from the socket buffer to prevent
-        overflow at high sample rates.
+        Each daemon binary message wraps one ``read_available`` chunk from
+        the serial port; we concatenate the unwrapped payloads and return
+        the raw bytes for the parser. Text messages on the stream connection
+        arrive only as the ``measure_stop`` ack and are not consumed here —
+        ``stop_measuring`` is responsible for that drain.
         """
-        if self._stream_sock is None:
+        if self._stream_sock is None or self._stream_reader is None:
             return b""
-        chunks: list[bytes] = []
+
+        chunks: list[bytes] = list(self._pending_binary)
+        self._pending_binary = []
+
         try:
             self._stream_sock.setblocking(False)
             while True:
-                chunk = self._stream_sock.recv(_BUF_SIZE)
+                try:
+                    chunk = self._stream_sock.recv(_BUF_SIZE)
+                except BlockingIOError:
+                    break
                 if not chunk:
                     break
-                chunks.append(chunk)
-        except BlockingIOError:
-            pass
+                self._stream_reader.feed(chunk)
+                for msg in self._stream_reader.drain():
+                    if isinstance(msg, bytes):
+                        chunks.append(msg)
+                    # Stray text messages remain in the reader's drain
+                    # buffer and would be lost; in practice the daemon
+                    # only sends text on the stream channel for the
+                    # measure_stop ack, which stop_measuring drains.
         finally:
             if self._stream_sock:
                 self._stream_sock.setblocking(True)
@@ -269,47 +316,23 @@ class DaemonClient:
         """
         if self._stream_sock is None:
             return []
-
-        # Collect any leftover from start_measuring ack
-        chunks: list[bytes] = []
-        leftover = getattr(self, '_leftover', b'')
-        if leftover:
-            chunks.append(leftover)
-            self._leftover = b''
-
-        try:
-            self._stream_sock.setblocking(False)
-            while True:
-                chunk = self._stream_sock.recv(_BUF_SIZE)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-        except BlockingIOError:
-            pass
-        finally:
-            if self._stream_sock:
-                self._stream_sock.setblocking(True)
-
-        if not chunks:
+        raw = self.read_available()
+        if not raw:
             return []
-        raw = b"".join(chunks)
 
         samples: list[Sample] = []
-        parsed = self._parser.feed(raw)
-        for frame in parsed:
+        for frame in self._parser.feed(raw):
             if frame is None:
                 continue
             adc_raw, range_idx, counter, logic = frame
             current = adc_to_microamps(
-                adc_raw, range_idx, self._modifiers, self._stream_vdd_mv
+                adc_raw, range_idx, self._modifiers, self._stream_vdd_mv,
             )
             if spike_filter:
                 current = self._spike_filter.process(current, range_idx)
             samples.append(Sample(
-                current_ua=current,
-                range=range_idx,
-                logic=logic,
-                counter=counter,
+                current_ua=current, range=range_idx,
+                logic=logic, counter=counter,
             ))
         return samples
 

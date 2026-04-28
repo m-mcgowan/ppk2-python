@@ -341,6 +341,29 @@ class TestDaemonProtocol:
         h.thread.join(timeout=3.0)
         assert not h.thread.is_alive()
 
+    def test_inbound_binary_message_is_rejected(self, harness):
+        """Daemon must reject binary inbound messages — they should never
+        be interpreted as commands. Pins the dispatch error path."""
+        from embedded_bridge.framing.message import MessageWriter
+
+        h, sock_path = harness
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(2.0)
+        s.connect(str(sock_path))
+        try:
+            s.sendall(MessageWriter().write_binary(b"\x00\x01\x02\x03"))
+            data = b""
+            while b"\n" not in data:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+            resp = json.loads(data.decode("utf-8").split("\n", 1)[0])
+            assert resp.get("ok") is False
+            assert "binary" in resp["error"].lower()
+        finally:
+            s.close()
+
 
 # --- DaemonClient tests ---
 
