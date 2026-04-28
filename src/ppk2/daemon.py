@@ -27,6 +27,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import commands
+from ._daemon_lib import ipc as _ipc
+from ._daemon_lib.state import state_dir
 from .conversion import SpikeFilter, adc_to_microamps
 from .parser import SampleParser, parse_metadata
 from .transport import PPK2Port, SerialTransport, resolve_device
@@ -37,15 +39,9 @@ logger = logging.getLogger(__name__)
 _BUF_SIZE = 65536
 
 
-def state_dir() -> Path:
-    """Return the daemon state directory, creating it if needed."""
-    d = Path.home() / ".local" / "state" / "ppk2"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
 def _sock_path(serial: str) -> Path:
-    return state_dir() / f"{serial}.sock"
+    """Endpoint discovery file (Unix: .sock; Windows: .endpoint)."""
+    return _ipc.endpoint_path(serial)
 
 
 def pid_path(serial: str) -> Path:
@@ -183,14 +179,8 @@ class DaemonServer:
         raise TimeoutError("Timeout waiting for PPK2 metadata")
 
     def _bind_socket(self) -> None:
-        sock_path = _sock_path(self._state.serial_number)
-        # Remove stale socket
-        if sock_path.exists():
-            sock_path.unlink()
-
-        self._server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._server_sock, _ = _ipc.listener_for(self._state.serial_number)
         self._server_sock.setblocking(False)
-        self._server_sock.bind(str(sock_path))
         self._server_sock.listen(4)
         self._sel.register(
             self._server_sock, selectors.EVENT_READ, self._accept
@@ -666,7 +656,7 @@ def find_daemon(
         return None
 
     # No device specified — look for any running daemon
-    for sock_file in sd.glob("*.sock"):
+    for sock_file in sd.glob(_ipc.endpoint_glob()):
         sn = sock_file.stem
         pid_file = _pid_path(sn)
         if pid_file.exists():
@@ -681,7 +671,7 @@ def list_daemons() -> list[tuple[str, Path]]:
     """List all running daemons. Returns list of (serial, socket_path)."""
     sd = state_dir()
     result = []
-    for sock_file in sd.glob("*.sock"):
+    for sock_file in sd.glob(_ipc.endpoint_glob()):
         sn = sock_file.stem
         pid_file = _pid_path(sn)
         if pid_file.exists():

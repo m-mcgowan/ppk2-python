@@ -3,6 +3,7 @@
 Tests use a real Unix domain socket with MockTransport — no hardware needed.
 """
 
+import contextlib
 import json
 import os
 import socket
@@ -13,6 +14,19 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
+
+@contextlib.contextmanager
+def _patched_state_dir(path):
+    """Patch ``state_dir`` in both modules that hold their own reference.
+
+    ``ppk2.daemon`` and ``ppk2._daemon_lib.ipc`` each ``import`` the function,
+    so each captures a separate binding. Tests need both pointed at the same
+    tmp dir to keep socket bind and file-discovery paths consistent.
+    """
+    with patch("ppk2.daemon.state_dir", return_value=path), \
+            patch("ppk2._daemon_lib.ipc.state_dir", return_value=path):
+        yield
 
 from ppk2.client import DaemonClient
 from ppk2.daemon import (
@@ -54,13 +68,18 @@ class DaemonTestHarness:
         self.mock = MockTransport(metadata=make_metadata_response(vdd=vdd))
         self.server: DaemonServer | None = None
         self.thread: threading.Thread | None = None
-        self._state_dir_patcher = patch(
-            "ppk2.daemon.state_dir", return_value=Path(self.tmpdir)
-        )
+        self._state_dir_patchers = [
+            patch("ppk2.daemon.state_dir", return_value=Path(self.tmpdir)),
+            patch(
+                "ppk2._daemon_lib.ipc.state_dir",
+                return_value=Path(self.tmpdir),
+            ),
+        ]
 
     def start(self) -> Path:
         """Start daemon in background thread. Returns socket path."""
-        self._state_dir_patcher.start()
+        for p in self._state_dir_patchers:
+            p.start()
 
         # Create server with mock transport
         self.server = DaemonServer(self.device)
@@ -104,7 +123,8 @@ class DaemonTestHarness:
             self.server._running = False
         if self.thread:
             self.thread.join(timeout=3.0)
-        self._state_dir_patcher.stop()
+        for p in self._state_dir_patchers:
+            p.stop()
 
     def client(self, sock_path: Path) -> DaemonClient:
         return DaemonClient(sock_path, self.serial)
@@ -796,12 +816,12 @@ class TestStateDirManagement:
             assert d == tmp_path / ".local" / "state" / "ppk2"
 
     def test_find_daemon_returns_none_when_no_daemons(self, tmp_path):
-        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+        with _patched_state_dir(tmp_path):
             assert find_daemon(serial="NONEXIST") is None
             assert find_daemon() is None
 
     def test_find_daemon_cleans_stale_socket(self, tmp_path):
-        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+        with _patched_state_dir(tmp_path):
             # Create stale PID file pointing to non-existent process
             sn = "STALE123"
             (tmp_path / f"{sn}.sock").write_text("")
@@ -814,11 +834,11 @@ class TestStateDirManagement:
             assert not (tmp_path / f"{sn}.pid").exists()
 
     def test_list_daemons_empty(self, tmp_path):
-        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+        with _patched_state_dir(tmp_path):
             assert list_daemons() == []
 
     def test_list_daemons_finds_live(self, tmp_path):
-        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+        with _patched_state_dir(tmp_path):
             sn = "LIVE1234"
             (tmp_path / f"{sn}.sock").write_text("")
             (tmp_path / f"{sn}.pid").write_text(str(os.getpid()))  # current process = alive
@@ -828,7 +848,7 @@ class TestStateDirManagement:
             assert daemons[0][0] == sn
 
     def test_cleanup_stale(self, tmp_path):
-        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+        with _patched_state_dir(tmp_path):
             sn = "CLEANUP1"
             (tmp_path / f"{sn}.sock").write_text("")
             (tmp_path / f"{sn}.pid").write_text("1")
@@ -842,7 +862,7 @@ class TestStateDirManagement:
         instead, so callers can just unpack the tuple.
         """
         from ppk2.daemon import DaemonNotRunning, resolve_daemon
-        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+        with _patched_state_dir(tmp_path):
             with pytest.raises(DaemonNotRunning) as exc:
                 resolve_daemon(serial="NONEXIST")
             assert "NONEXIST" in str(exc.value)
@@ -852,7 +872,7 @@ class TestStateDirManagement:
 
     def test_resolve_daemon_returns_tuple_when_running(self, tmp_path):
         from ppk2.daemon import resolve_daemon
-        with patch("ppk2.daemon.state_dir", return_value=tmp_path):
+        with _patched_state_dir(tmp_path):
             sn = "LIVE1234"
             (tmp_path / f"{sn}.sock").write_text("")
             (tmp_path / f"{sn}.pid").write_text(str(os.getpid()))
