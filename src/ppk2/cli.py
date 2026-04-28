@@ -679,28 +679,54 @@ def main() -> int:
     )
     sub = parser.add_subparsers(dest="command")
 
+    # --daemon / --direct: shared by every base op verb (power/mode/voltage/
+    # measure) so users can pin the transport regardless of where the verb
+    # is registered. Mutually exclusive — argparse handles the combo error.
+    transport_flags = argparse.ArgumentParser(add_help=False)
+    _tg = transport_flags.add_mutually_exclusive_group()
+    _tg.add_argument(
+        "--daemon", action="store_true", default=False,
+        help="Require a running daemon (don't auto-spawn)",
+    )
+    _tg.add_argument(
+        "--direct", action="store_true", default=False,
+        help="Bypass the daemon, open the serial port directly",
+    )
+
     # --- Device commands ---
 
     # ppk2 list
     sub.add_parser("list", help="List connected PPK2 devices")
 
     # ppk2 power
-    p_power = sub.add_parser("power", help="Toggle DUT power on/off")
+    p_power = sub.add_parser(
+        "power", help="Toggle DUT power on/off",
+        parents=[transport_flags],
+    )
     p_power.add_argument("state", choices=["on", "off"], help="Power state")
     p_power.add_argument("--port", help="Serial port (auto-detect if omitted)")
 
     # ppk2 mode
-    p_mode = sub.add_parser("mode", help="Set measurement mode")
+    p_mode = sub.add_parser(
+        "mode", help="Set measurement mode",
+        parents=[transport_flags],
+    )
     p_mode.add_argument("mode", choices=["source", "ampere"], help="source=PPK2 powers DUT, ampere=external supply")
     p_mode.add_argument("--port", help="Serial port (auto-detect if omitted)")
 
     # ppk2 voltage
-    p_voltage = sub.add_parser("voltage", help="Set source voltage (mV)")
+    p_voltage = sub.add_parser(
+        "voltage", help="Set source voltage (mV)",
+        parents=[transport_flags],
+    )
     p_voltage.add_argument("millivolts", type=int, help="Voltage in millivolts (800-5000)")
     p_voltage.add_argument("--port", help="Serial port (auto-detect if omitted)")
 
     # ppk2 measure
-    p_measure = sub.add_parser("measure", help="Take a measurement")
+    p_measure = sub.add_parser(
+        "measure", help="Take a measurement",
+        parents=[transport_flags],
+    )
     p_measure.add_argument("duration", type=float, help="Duration in seconds")
     p_measure.add_argument("--port", help="Serial port (auto-detect if omitted)")
     p_measure.add_argument("--source", type=int, metavar="MV", help="Use source mode at this voltage (mV)")
