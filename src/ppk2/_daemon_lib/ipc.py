@@ -49,10 +49,18 @@ def listener_for(serial: str) -> tuple[socket.socket, Path]:
     """
     if sys.platform == "win32":
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # No SO_REUSEADDR: the OS assigns the port via bind(("127.0.0.1", 0)),
+        # so reuse semantics don't apply. Setting it on Windows actually
+        # enables SO_REUSEPORT-style behaviour and could mask a duplicate-
+        # daemon bug.
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
         endpoint = _endpoint_path(serial)
+        # Overwrite any stale endpoint from a previous crashed daemon; without
+        # this, connect_to() would surface a confusing ConnectionRefusedError
+        # against a long-dead port.
+        if endpoint.exists():
+            endpoint.unlink()
         endpoint.write_text(f"127.0.0.1:{port}")
         return sock, endpoint
 
@@ -75,7 +83,13 @@ def connect_to(serial: str, *, timeout: float | None = None) -> socket.socket:
         ep = _endpoint_path(serial)
         if not ep.exists():
             raise FileNotFoundError(f"No daemon endpoint for {serial}")
-        host, port_s = ep.read_text().strip().split(":")
+        content = ep.read_text().strip()
+        try:
+            host, port_s = content.split(":")
+        except ValueError as e:
+            raise RuntimeError(
+                f"Malformed daemon endpoint file {ep}: {content!r}"
+            ) from e
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if timeout is not None:
             sock.settimeout(timeout)
