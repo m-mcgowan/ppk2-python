@@ -145,18 +145,38 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_power(args: argparse.Namespace) -> int:
-    """Toggle DUT power on/off."""
+def _transport_from_args(args: argparse.Namespace) -> str:
+    """Map ``--daemon`` / ``--direct`` argparse flags to a transport mode."""
+    if getattr(args, "daemon", False):
+        return "daemon"
+    if getattr(args, "direct", False):
+        return "direct"
+    return "auto"
+
+
+def cmd_power_impl(args, *, transport: str) -> int:
     on = args.state == "on"
-    with _open_device(port=args.port) as ppk:
+    with _open_device(
+        port=getattr(args, "port", None),
+        serial=getattr(args, "serial", None),
+        transport=transport,
+    ) as ppk:
         ppk.toggle_dut_power(on)
         print(f"DUT power {'ON' if on else 'OFF'}")
     return 0
 
 
-def cmd_mode(args: argparse.Namespace) -> int:
-    """Set PPK2 measurement mode."""
-    with _open_device(port=args.port) as ppk:
+def cmd_power(args: argparse.Namespace) -> int:
+    """Toggle DUT power on/off."""
+    return cmd_power_impl(args, transport=_transport_from_args(args))
+
+
+def cmd_mode_impl(args, *, transport: str) -> int:
+    with _open_device(
+        port=getattr(args, "port", None),
+        serial=getattr(args, "serial", None),
+        transport=transport,
+    ) as ppk:
         if args.mode == "source":
             ppk.use_source_meter()
             print("Mode: source meter (PPK2 supplies power)")
@@ -166,19 +186,35 @@ def cmd_mode(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_voltage(args: argparse.Namespace) -> int:
-    """Set source voltage in millivolts."""
-    with _open_device(port=args.port) as ppk:
+def cmd_mode(args: argparse.Namespace) -> int:
+    """Set PPK2 measurement mode."""
+    return cmd_mode_impl(args, transport=_transport_from_args(args))
+
+
+def cmd_voltage_impl(args, *, transport: str) -> int:
+    with _open_device(
+        port=getattr(args, "port", None),
+        serial=getattr(args, "serial", None),
+        transport=transport,
+    ) as ppk:
         ppk.set_source_voltage(args.millivolts)
         print(f"Source voltage: {args.millivolts} mV")
     return 0
 
 
-def cmd_measure(args: argparse.Namespace) -> int:
-    """Take a quick measurement and print stats."""
+def cmd_voltage(args: argparse.Namespace) -> int:
+    """Set source voltage in millivolts."""
+    return cmd_voltage_impl(args, transport=_transport_from_args(args))
+
+
+def cmd_measure_impl(args, *, transport: str) -> int:
     from .report import format_current
 
-    with _open_device(port=args.port) as ppk:
+    with _open_device(
+        port=getattr(args, "port", None),
+        serial=getattr(args, "serial", None),
+        transport=transport,
+    ) as ppk:
         if args.source:
             ppk.use_source_meter()
             ppk.set_source_voltage(args.source)
@@ -199,6 +235,11 @@ def cmd_measure(args: argparse.Namespace) -> int:
             save_ppk2(result, args.output)
             print(f"\nSaved: {args.output}")
     return 0
+
+
+def cmd_measure(args: argparse.Namespace) -> int:
+    """Take a quick measurement and print stats."""
+    return cmd_measure_impl(args, transport=_transport_from_args(args))
 
 
 def cmd_open(args: argparse.Namespace) -> int:
