@@ -132,7 +132,9 @@ def _autospawn_daemon(serial: str):
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    """List connected PPK2 devices."""
+    """List connected PPK2 devices, including per-device daemon state."""
+    from ._daemon_lib.service import get_service_manager
+    from .daemon import find_daemon
     from .transport import list_ppk2_devices
 
     devices = list_ppk2_devices()
@@ -140,8 +142,24 @@ def cmd_list(args: argparse.Namespace) -> int:
         print("No PPK2 devices found.")
         return 1
 
+    svc = get_service_manager()
+    fmt = "{sn:10s}  {port:32s}  {daemon}"
+    print(fmt.format(sn="SERIAL", port="PORT", daemon="DAEMON"))
     for d in devices:
-        print(f"{d.port}  serial={d.serial_number}  location={d.location}")
+        info = find_daemon(serial=d.serial_number)
+        if info:
+            mgmt = (
+                "launchd" if (svc and svc.is_installed(d.serial_number))
+                else "fork"
+            )
+            daemon_col = f"running ({mgmt})"
+        elif svc and svc.is_installed(d.serial_number):
+            daemon_col = "installed (stopped)"
+        else:
+            daemon_col = "─"
+        print(fmt.format(
+            sn=d.serial_number, port=d.port[:32], daemon=daemon_col,
+        ))
     return 0
 
 
