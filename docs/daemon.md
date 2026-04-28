@@ -10,12 +10,15 @@ daemon` CLI subcommands are the supported interface.
 Two limitations of the PPK2 make a one-shot CLI command awkward in source meter
 mode.
 
-### 1. DTR drop cuts DUT power
+### 1. Closing the serial port cuts DUT power
 
-In **source meter mode** the PPK2 drives the DUT rail itself. The `nrf_pwr`
-control firmware ties the rail to the host's USB CDC-ACM presence — closing
-the serial port (which on macOS unconditionally drops DTR) is interpreted as
-"host went away" and the DUT rail collapses.
+In **source meter mode** the PPK2 drives the DUT rail itself. The PPK2's
+nRF firmware ties the rail to USB CDC-ACM presence — when the host
+releases the CDC handle, the host driver sends
+`SET_CONTROL_LINE_STATE(DTR=0, RTS=0)` (per USB CDC-ACM spec, same on
+every OS), the PPK2 firmware reads that as "host went away" and the DUT
+rail collapses. Setting `pyserial(dsrdtr=False)` does not help — that
+flag controls hardware flow control, not the line-state on close.
 
 That means a sequence like
 
@@ -35,8 +38,9 @@ lifetime of the daemon process. Clients talk to the daemon, not directly to
 the PPK2, so the rail stays up between commands.
 
 In **ampere meter mode** the PPK2 only measures, and an external supply
-powers the DUT — so the DTR-on-close behaviour is harmless and a one-shot
-CLI command is fine. The daemon is only required for source mode workflows.
+powers the DUT — so the close-cuts-rail behaviour is harmless and a
+one-shot CLI command is fine. The daemon is only required for source
+mode workflows.
 
 ### 2. One process per device
 

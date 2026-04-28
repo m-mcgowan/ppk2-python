@@ -17,11 +17,23 @@ Follows [Keep a Changelog](https://keepachangelog.com/) conventions.
 - Desktop automation — open .ppk2 files in nRF Connect via Playwright
 - GitHub Action for CI power profiling reports
 - Embedded scope events in `.ppk2` files (`events.json` ZIP entry) — rendered as a "Named scopes" table in HTML reports
+- `ppk2 daemon` CLI subcommand group: `start`, `stop`, `status`, `install`, `uninstall`, `run`, `log`, `release`, `acquire`, plus `power`, `voltage`, `mode`, `measure` aliases pinned to the daemon transport.
+- `ppk2 direct` namespace for explicit serial-port bypass — same operational verbs (`power`, `voltage`, `mode`, `measure`) pinned to the direct transport.
+- Auto-routing on base ops: `ppk2 power`, `ppk2 voltage`, `ppk2 mode`, `ppk2 measure` use the daemon when one is running, auto-spawn one when not (Unix). `--daemon` and `--direct` flags select transport explicitly.
+- `ppk2 list` shows daemon state per device (`running (fork|launchd)`, `installed (stopped)`, or `─`).
+- macOS `launchctl` integration via `LaunchdManager` for boot-persistent daemons, one per PPK2 (label `com.ppk2.daemon.<SERIAL>`).
+- Cross-platform IPC + state-dir + service-management abstractions under `src/ppk2/_daemon_lib/` (`state.py`, `ipc.py`, `service.py`), intended for mechanical extraction to `embedded_bridge.daemon` in a future release. `WinServiceManager` and `SystemdManager` are stubs in this release.
+- IPC wire protocol upgraded to embedded-bridge's message protocol (text + length-prefixed binary). Resolves the "raw frame bytes can contain `\n`" hazard that made `measure_stop` ack reads fragile.
+- New runtime dependency on `embedded-bridge` for the message protocol primitives.
 
 ### Changed
 - README restructured: feature list now links to per-feature docs in `docs/`; long sections (AI, firmware, GitHub Action, desktop, file format) factored out
 - Quick Start leads with basic measurement and the daemon (with explanation of the source-meter DTR-on-close limitation) instead of firmware upgrade
 - AI default model bumped from `claude-sonnet-4-5-20250929` to `claude-sonnet-4-6` (`generate_profile`, `analyze_profile`, `validate_profile`, and the `--model` argparse defaults)
+- `ppk2 daemon stop` escalates from graceful IPC shutdown (5 s window) to SIGTERM (2 s window) to SIGKILL when a forked daemon doesn't drain a stuck reader.
+- Daemon now fast-exits with a clear `ConnectionError` when its target serial isn't connected, so launchd retry loops for unplugged devices stop spamming the log instead of waiting ~25 s on a metadata-read timeout.
+- Daemon errors out with a pointer at `ppk2 firmware abort-dfu` when the target PPK2 enumerates as the DFU bootloader (PID 0x521F) instead of trying to open it and getting garbage. The CLI auto-spawn path mirrors the same pre-check.
+- Documentation: `docs/daemon.md` corrected to attribute the close-cuts-rail behaviour to USB CDC-ACM `SET_CONTROL_LINE_STATE` (universal across OSes) rather than macOS-specific DTR-on-close.
 
 ### Removed
 - Commented out the unused trigger / switch-point / spike-filtering / reset opcodes in `commands.py` (`0x01`, `0x03`, `0x05`, `0x0E`, `0x0F`, `0x12`, `0x15`, `0x16`, `0x20`). Triggering, switch-point hysteresis, and spike filtering are all evaluated host-side in the modern nRF Connect Power Profiler app, and these opcodes were never called in our codebase. Whether the PPK2 firmware still implements them is unverified — the helpers are retained in commented form for reference. `commands.reset` and its test removed
