@@ -659,6 +659,211 @@ def cmd_firmware_abort_dfu(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fmt_uptime(seconds: float) -> str:
+    s = int(seconds)
+    if s >= 3600:
+        return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+    if s >= 60:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s}s"
+
+
+def _resolve_lifecycle_targets(args):
+    """Resolve --serial/--port/--all to a list of PPK2Port-like objects.
+
+    Used by lifecycle verbs (start/stop) that may operate on a single
+    device or every connected/installed PPK2. ``--all`` falls back to
+    installed-but-disconnected serials if no devices are currently
+    enumerated, so a launchd-installed disconnected unit still shows up.
+    """
+    from ._daemon_lib.service import get_service_manager
+    from .transport import list_ppk2_devices, resolve_device
+
+    if getattr(args, "all", False):
+        devices = list_ppk2_devices()
+        if not devices:
+            svc = get_service_manager()
+            if svc:
+                devices = [
+                    type("D", (), {"serial_number": sn, "port": ""})()
+                    for sn in svc.list_installed()
+                ]
+        if not devices:
+            print(
+                "No PPK2 devices or installed services found.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return devices
+    return [resolve_device(
+        serial=getattr(args, "serial", None),
+        port=getattr(args, "port", None),
+    )]
+
+
+def cmd_daemon_run(args: argparse.Namespace) -> int:
+    from .daemon import run_daemon
+
+    try:
+        run_daemon(serial=args.serial, port=args.port)
+    except KeyboardInterrupt:
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_daemon_start(args: argparse.Namespace) -> int:
+    from ._daemon_lib.service import get_service_manager
+    from .daemon import find_daemon, start_daemon
+
+    devices = _resolve_lifecycle_targets(args)
+    svc = get_service_manager()
+    rc = 0
+    for device in devices:
+        sn = device.serial_number
+        if find_daemon(serial=sn):
+            print(f"{sn}: already running")
+            continue
+        if svc and svc.is_installed(sn):
+            svc.start(sn)
+            print(f"{sn}: started (service)")
+        else:
+            try:
+                _, pid = start_daemon(serial=sn)
+                print(f"{sn}: started (fork, pid={pid})")
+            except Exception as e:
+                print(f"{sn}: error: {e}", file=sys.stderr)
+                rc = 1
+    return rc
+
+
+def cmd_daemon_stop(args: argparse.Namespace) -> int:
+    from ._daemon_lib.service import get_service_manager
+    from .client import DaemonClient
+    from .daemon import find_daemon, list_daemons
+
+    svc = get_service_manager()
+
+    if getattr(args, "all", False):
+        targets = list_daemons()
+    else:
+        info = find_daemon(
+            serial=getattr(args, "serial", None),
+            port=getattr(args, "port", None),
+        )
+        targets = [info] if info else []
+
+    if not targets and not (svc and svc.list_installed()):
+        print("No daemons running.")
+        return 1
+
+    rc = 0
+    for sn, sock_path in targets:
+        if svc and svc.is_installed(sn):
+            svc.stop(sn)
+            print(f"{sn}: stopped (service)")
+        else:
+            try:
+                client = DaemonClient(sock_path, sn)
+                client.shutdown()
+                print(f"{sn}: stopped")
+            except Exception as e:
+                print(f"{sn}: error stopping: {e}", file=sys.stderr)
+                rc = 1
+    return rc
+
+
+def cmd_daemon_status(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from ._daemon_lib.service import get_service_manager
+    from .client import DaemonClient
+    from .daemon import list_daemons
+
+    svc = get_service_manager()
+
+    rows = []
+    seen = set()
+    for sn, sock_path in list_daemons():
+        seen.add(sn)
+        managed = "launchd" if (svc and svc.is_installed(sn)) else "fork"
+        try:
+            with DaemonClient(sock_path, sn) as client:
+                state = client.status()
+            rows.append({
+                "serial": sn,
+                "port": state.get("port", ""),
+                "running": True,
+                "managed": managed,
+                "released": state.get("released", False),
+                "vdd_mv": state.get("vdd_mv"),
+                "mode": state.get("mode"),
+                "dut_power": state.get("dut_power", False),
+                "measuring": state.get("measuring", False),
+                "uptime_s": state.get("uptime_s", 0),
+            })
+        except Exception:
+            rows.append(
+                {"serial": sn, "running": False, "managed": managed}
+            )
+
+    if svc:
+        for sn in svc.list_installed():
+            if sn in seen:
+                continue
+            rows.append(
+                {"serial": sn, "running": False, "managed": "launchd"}
+            )
+
+    if getattr(args, "json", False):
+        print(_json.dumps(rows, indent=2))
+        return 0 if rows else 1
+
+    if not rows:
+        print("No daemons running or installed.")
+        return 1
+
+    fmt = (
+        "{serial:10s}  {port:32s}  {power:5s}  "
+        "{vdd:9s}  {mode:7s}  {uptime:>7s}  {managed}"
+    )
+    print(fmt.format(
+        serial="SERIAL", port="PORT", power="POWER",
+        vdd="VDD", mode="MODE", uptime="UPTIME", managed="MANAGED",
+    ))
+    for r in rows:
+        if r.get("running"):
+            print(fmt.format(
+                serial=r["serial"],
+                port=(r.get("port") or "")[:32],
+                power=("ON" if r.get("dut_power") else "OFF"),
+                vdd=f"{r.get('vdd_mv', 0)}mV",
+                mode=r.get("mode") or "─",
+                uptime=_fmt_uptime(r.get("uptime_s", 0)),
+                managed=r.get("managed", "─"),
+            ))
+        else:
+            print(fmt.format(
+                serial=r["serial"], port="─", power="─",
+                vdd="─", mode="─", uptime="─",
+                managed=f"{r.get('managed', '─')} (stopped)",
+            ))
+    return 0
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    handlers = {
+        "run": cmd_daemon_run,
+        "start": cmd_daemon_start,
+        "stop": cmd_daemon_stop,
+        "status": cmd_daemon_status,
+    }
+    action = getattr(args, "daemon_command", None) or "status"
+    return handlers[action](args)
+
+
 def _cmd_firmware_dispatch(args: argparse.Namespace) -> int:
     action = getattr(args, "firmware_action", None) or "info"
     if action == "info":
@@ -818,6 +1023,45 @@ def main() -> int:
         parents=[fw_common],
     )
 
+    # ppk2 daemon ...
+    p_daemon = sub.add_parser(
+        "daemon", help="Manage PPK2 daemon processes"
+    )
+    daemon_sub = p_daemon.add_subparsers(dest="daemon_command")
+
+    def _daemon_selectors(p):
+        g = p.add_mutually_exclusive_group()
+        g.add_argument("--serial", help="PPK2 serial number")
+        g.add_argument("--port", help="Serial port path")
+        g.add_argument(
+            "--all", action="store_true",
+            help="Operate on all running/installed daemons",
+        )
+
+    p_drun = daemon_sub.add_parser(
+        "run", help="Run daemon in foreground (no fork; for service managers)"
+    )
+    p_drun.add_argument("--serial", help="PPK2 serial number")
+    p_drun.add_argument("--port", help="Serial port path")
+
+    p_dstart = daemon_sub.add_parser(
+        "start", help="Start daemon (service or fork)"
+    )
+    _daemon_selectors(p_dstart)
+
+    p_dstop = daemon_sub.add_parser(
+        "stop", help="Stop a running daemon"
+    )
+    _daemon_selectors(p_dstop)
+
+    p_dstatus = daemon_sub.add_parser(
+        "status", help="Show daemon status"
+    )
+    _daemon_selectors(p_dstatus)
+    p_dstatus.add_argument(
+        "--json", action="store_true", help="JSON output"
+    )
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -837,6 +1081,7 @@ def main() -> int:
         "generate": cmd_generate,
         "merge": cmd_merge,
         "firmware": _cmd_firmware_dispatch,
+        "daemon": cmd_daemon,
     }
     return handlers[args.command](args)
 
