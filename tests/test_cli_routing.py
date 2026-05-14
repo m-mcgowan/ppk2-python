@@ -1,10 +1,27 @@
 """Tests for the CLI's transport routing chokepoint (`_open_device`)."""
 
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ppk2 import cli
+
+
+def test_python_dash_m_ppk2_runs():
+    """`python -m ppk2 --help` must succeed so the launchd plist's
+    `python -u -m ppk2 daemon run --serial …` invocation works.
+    Regression for a missing __main__.py."""
+    result = subprocess.run(
+        [sys.executable, "-m", "ppk2", "--help"],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, (
+        f"`python -m ppk2 --help` failed:\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "ppk2" in result.stdout.lower()
 
 
 def test_open_device_direct_returns_ppk2device(monkeypatch):
