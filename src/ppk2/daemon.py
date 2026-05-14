@@ -892,6 +892,13 @@ def start_daemon(
         os.dup2(devnull, 0)
         os.close(devnull)
 
+        # Close any fds inherited from the parent (notably the CLI's
+        # spawn.lock fd opened by _autospawn_daemon — without this, the
+        # child keeps the OFD alive and the flock is never released even
+        # after the parent's `with open(...)` exits, hanging every
+        # subsequent concurrent auto-spawn for the same serial).
+        os.closerange(3, 1024)
+
         run_daemon(serial=device.serial_number)
     except Exception:
         logging.exception("Daemon failed")
