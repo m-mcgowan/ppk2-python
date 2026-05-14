@@ -7,13 +7,44 @@ import pytest
 from ppk2 import cli
 
 
-def test_open_device_direct_returns_ppk2device():
-    """transport='direct' must skip daemon discovery entirely and open
-    the hardware directly via PPK2Device.open."""
+def test_open_device_direct_returns_ppk2device(monkeypatch):
+    """transport='direct' opens the hardware directly via PPK2Device.open
+    when no daemon owns the device. Resolves the device and checks
+    find_daemon; with no match the call falls through to PPK2Device.open.
+    """
+    monkeypatch.setattr("ppk2.daemon.find_daemon", lambda **kw: None)
+    monkeypatch.setattr(
+        "ppk2.transport.resolve_device",
+        lambda **kw: type(
+            "D", (), {"serial_number": "SN", "port": "P"}
+        )(),
+    )
     with patch("ppk2.device.PPK2Device.open") as mock_open:
         mock_open.return_value = MagicMock()
         ppk = cli._open_device(port=None, serial=None, transport="direct")
         assert ppk is mock_open.return_value
+
+
+def test_open_device_direct_interlocks_against_running_daemon(
+    monkeypatch,
+):
+    """transport='direct' must refuse to bypass a running daemon even
+    when no --serial/--port selector was passed. Auto-detect must still
+    trigger the interlock — opening the port directly while the daemon
+    holds it would race on writes and corrupt streaming.
+    """
+    monkeypatch.setattr(
+        "ppk2.transport.resolve_device",
+        lambda **kw: type(
+            "D", (), {"serial_number": "SN", "port": "P"}
+        )(),
+    )
+    monkeypatch.setattr(
+        "ppk2.daemon.find_daemon",
+        lambda **kw: ("SN", "/tmp/SN.sock"),
+    )
+    with pytest.raises(SystemExit):
+        cli._open_device(port=None, serial=None, transport="direct")
 
 
 def test_open_device_daemon_errors_when_no_daemon(monkeypatch):

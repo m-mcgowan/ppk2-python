@@ -47,22 +47,23 @@ def _open_device(
     if transport == "direct":
         # Interlock: refuse to bypass a running daemon — opening the
         # serial port directly while the daemon owns it would race on
-        # writes and corrupt streaming. Skipped when no selector was
-        # given (legacy `with _open_device(port=None)` from older code).
-        if serial or port:
-            try:
-                d = _transport.resolve_device(port=port, serial=serial)
-                if _daemon.find_daemon(serial=d.serial_number):
-                    print(
-                        f"Error: a daemon owns {d.serial_number}. Use "
-                        f"`ppk2 daemon release` or `ppk2 daemon stop` first.",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-            except ConnectionError:
-                # No device — fall through; PPK2Device.open will surface
-                # a friendlier error than the interlock could.
-                pass
+        # writes and corrupt streaming. Also fires for the auto-detect
+        # case (no --serial/--port) so `ppk2 power on --direct` against
+        # a single PPK2 owned by a daemon errors clearly rather than
+        # bubbling up a SerialException flock failure.
+        try:
+            d = _transport.resolve_device(port=port, serial=serial)
+            if _daemon.find_daemon(serial=d.serial_number):
+                print(
+                    f"Error: a daemon owns {d.serial_number}. Use "
+                    f"`ppk2 daemon release` or `ppk2 daemon stop` first.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        except ConnectionError:
+            # No device resolvable — fall through; PPK2Device.open will
+            # surface a friendlier error than the interlock could.
+            pass
         try:
             return PPK2Device.open(port)
         except ConnectionError as e:
