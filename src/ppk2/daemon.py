@@ -760,7 +760,12 @@ def list_daemons() -> list[tuple[str, Path]]:
 
 
 def _cleanup_stale(serial: str) -> None:
-    for path in (_sock_path(serial), _pid_path(serial)):
+    """Remove the per-serial state files that other daemons would race
+    against on a fresh start. The ``.log`` file is intentionally
+    retained for post-mortem inspection.
+    """
+    spawn_lock = state_dir() / f"{serial}.spawn.lock"
+    for path in (_sock_path(serial), _pid_path(serial), spawn_lock):
         try:
             path.unlink()
         except FileNotFoundError:
