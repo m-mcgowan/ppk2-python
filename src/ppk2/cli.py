@@ -869,6 +869,15 @@ def cmd_daemon_stop(args: argparse.Namespace) -> int:
                 _os.kill(pid, _sig.SIGKILL)
             except OSError:
                 pass
+            # SIGKILL is asynchronous: pid_alive() right after the kill
+            # call usually still sees the pid because the kernel hasn't
+            # reaped it yet (especially for orphaned daemons that init
+            # has to clean up). Poll briefly so we don't false-fail.
+            deadline = _time.monotonic() + 2.0
+            while _time.monotonic() < deadline:
+                if not pid_alive(pid):
+                    break
+                _time.sleep(0.1)
 
         if pid_alive(pid):
             print(
