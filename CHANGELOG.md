@@ -5,6 +5,25 @@ Follows [Keep a Changelog](https://keepachangelog.com/) conventions.
 
 ## [Unreleased]
 
+### Fixed
+- **`status` reported a device that was no longer attached.** The handler
+  returned the cached `DeviceState` verbatim, so `vdd_mv` and `dut_power` —
+  which are only ever set by *commands* — were presented as though measured.
+  A daemon whose PPK2 had been unplugged for weeks still reported a powered
+  DUT, and nothing in the design could notice. `status` now also returns
+  `connected`, computed live from the transport's open state plus the
+  presence of the serial device node (pyserial leaves `is_open` true after a
+  USB device physically disappears, so it does not detect an unplug on its
+  own). The check is side-effect free — no writes — so `status` can never
+  perturb an in-flight measurement.
+- **`uptime_s` under-reported on hosts that sleep.** It derives from
+  `time.monotonic()`, which does not advance while the machine is suspended,
+  so a long-lived daemon on a laptop drifts far from reality (observed: 75
+  days old, reporting 47). `status` now also returns `age_s`, true wall-clock
+  age, so the two can be compared.
+- `ppk2 daemon status` gains a LINK column showing `up` / `GONE`, or `─` when
+  talking to a daemon that predates link reporting.
+
 ### Added
 - Daemon server and client for persistent DUT power management
 - Hardware integration tests and device connect sequence fixes

@@ -79,15 +79,29 @@ class DeviceState:
     measuring: bool = False
     released: bool = False
     started_at: float = field(default_factory=time.monotonic)
+    started_wall: float = field(default_factory=time.time)
 
     @property
     def uptime_s(self) -> float:
+        """Time spent awake since start.
+
+        time.monotonic() does not advance while the host is asleep (notably
+        on Darwin), so for a long-lived daemon on a laptop this is
+        substantially less than wall-clock age. See age_s.
+        """
         return time.monotonic() - self.started_at
+
+    @property
+    def age_s(self) -> float:
+        """Wall-clock age since start, including time the host was asleep."""
+        return time.time() - self.started_wall
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["uptime_s"] = round(self.uptime_s, 1)
+        d["age_s"] = round(self.age_s, 1)
         del d["started_at"]
+        del d["started_wall"]
         return d
 
 
@@ -459,9 +473,11 @@ class DaemonServer:
                 self._send_response(conn, {"ok": True, "stats": stats})
 
             elif cmd == "status":
+                state = self._state.to_dict()
+                state["connected"] = self._device_connected()
                 self._send_response(conn, {
                     "ok": True,
-                    "state": self._state.to_dict(),
+                    "state": state,
                 })
 
             elif cmd == "release":
@@ -506,6 +522,34 @@ class DaemonServer:
                 self._send_response(conn, {"ok": False, "error": str(e)})
             except Exception:
                 pass
+
+    def _device_connected(self) -> bool:
+        """Whether the PPK2 still appears to be attached.
+
+        Deliberately side-effect free — no writes, so calling status() can
+        never perturb an in-flight measurement.
+
+        Two checks, because neither suffices alone:
+          - is_open: false once the transport has been closed or released,
+            but pyserial leaves it true after a USB device physically
+            disappears, so it does not catch an unplug on its own.
+          - port node presence: the /dev entry vanishes on USB disconnect,
+            which is what actually detects an unplug. Only meaningful for a
+            real serial transport — a MockTransport has no device node, so
+            for anything else is_open is taken as authoritative.
+
+        A device that is present but wedged still reads as connected; proving
+        otherwise needs I/O, which this must not do.
+        """
+        if self._state.released:
+            return False
+        if not self._transport.is_open:
+            return False
+        if isinstance(self._transport, SerialTransport):
+            port = self._state.port
+            if port and not os.path.exists(port):
+                return False
+        return True
 
     def _measure_duration(
         self, duration_s: float, spike_filter: bool

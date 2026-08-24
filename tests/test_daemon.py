@@ -186,6 +186,90 @@ class TestDeviceState:
         assert t2 > t1
 
 
+class TestDeviceStateAge:
+    """Wall-clock age vs awake-time uptime.
+
+    uptime_s uses time.monotonic(), which on Darwin does not advance while
+    the machine is asleep. A daemon left running for weeks on a laptop
+    therefore under-reports its age badly (observed: 75 days old, reporting
+    47). age_s reports true wall-clock age so the two can be compared.
+    """
+
+    def test_reports_both_age_and_uptime(self):
+        d = DeviceState().to_dict()
+        assert "uptime_s" in d
+        assert "age_s" in d
+        assert "started_wall" not in d
+
+    def test_age_tracks_wall_clock(self):
+        s = DeviceState()
+        s.started_wall -= 100.0          # pretend it started 100s ago
+        assert s.age_s >= 100.0
+        # uptime is unaffected by the wall-clock adjustment
+        assert s.uptime_s < 100.0
+
+
+class TestDaemonConnectedReporting:
+    """status must not report a device that is no longer there.
+
+    The status handler returned cached DeviceState verbatim, so a daemon
+    whose PPK2 had been unplugged for weeks still reported the last
+    *commanded* vdd/dut_power as though measured.
+    """
+
+    def test_status_reports_connected_when_device_present(self, harness):
+        h, sock_path = harness
+        resp = _send_recv(sock_path, {"cmd": "status"})
+        assert resp["state"]["connected"] is True
+
+    def test_status_reports_disconnected_when_transport_closed(self, harness):
+        h, sock_path = harness
+        h.server._transport.close()
+        resp = _send_recv(sock_path, {"cmd": "status"})
+        assert resp["state"]["connected"] is False
+
+    def test_port_node_vanishing_marks_disconnected(self, harness):
+        """USB unplug removes the /dev node while is_open stays True.
+
+        This is the real-world case that motivated the fix: pyserial keeps
+        is_open True after the device physically disappears, so is_open alone
+        never notices an unplug. Exercised against a real SerialTransport
+        (with is_open forced True) because the node check is deliberately
+        skipped for MockTransport, which has no device node.
+        """
+        from ppk2.transport import SerialTransport
+
+        h, _sock_path = harness
+        gone = "/dev/cu.definitely-not-present"
+        transport = SerialTransport(gone)
+        with patch.object(SerialTransport, "is_open", property(lambda self: True)):
+            h.server._transport = transport
+            h.server._state.port = gone
+            assert h.server._device_connected() is False
+
+    def test_present_port_with_open_transport_is_connected(self, harness, tmp_path):
+        """Control for the above: node present + is_open true => connected."""
+        from ppk2.transport import SerialTransport
+
+        h, _sock_path = harness
+        present = tmp_path / "cu.fake-ppk2"
+        present.write_text("")
+        transport = SerialTransport(str(present))
+        with patch.object(SerialTransport, "is_open", property(lambda self: True)):
+            h.server._transport = transport
+            h.server._state.port = str(present)
+            assert h.server._device_connected() is True
+
+    def test_cached_fields_remain_alongside_connected(self, harness):
+        """The cached fields stay — they just stop masquerading as truth."""
+        h, sock_path = harness
+        resp = _send_recv(sock_path, {"cmd": "status"})
+        state = resp["state"]
+        assert "dut_power" in state
+        assert "vdd_mv" in state
+        assert state["connected"] is True
+
+
 # --- Protocol tests (raw socket) ---
 
 

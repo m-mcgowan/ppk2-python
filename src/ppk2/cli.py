@@ -920,6 +920,8 @@ def cmd_daemon_status(args: argparse.Namespace) -> int:
                 "dut_power": state.get("dut_power", False),
                 "measuring": state.get("measuring", False),
                 "uptime_s": state.get("uptime_s", 0),
+                "age_s": state.get("age_s", 0),
+                "connected": state.get("connected"),
             })
         except Exception:
             rows.append(
@@ -943,11 +945,11 @@ def cmd_daemon_status(args: argparse.Namespace) -> int:
         return 1
 
     fmt = (
-        "{serial:10s}  {port:32s}  {power:5s}  "
+        "{serial:10s}  {port:32s}  {link:9s}  {power:5s}  "
         "{vdd:9s}  {mode:7s}  {uptime:>7s}  {managed}"
     )
     print(fmt.format(
-        serial="SERIAL", port="PORT", power="POWER",
+        serial="SERIAL", port="PORT", link="LINK", power="POWER",
         vdd="VDD", mode="MODE", uptime="UPTIME", managed="MANAGED",
     ))
     for r in rows:
@@ -955,6 +957,11 @@ def cmd_daemon_status(args: argparse.Namespace) -> int:
             print(fmt.format(
                 serial=r["serial"],
                 port=(r.get("port") or "")[:32],
+                link=(
+                    "─"
+                    if r.get("connected") is None
+                    else ("up" if r.get("connected") else "GONE")
+                ),
                 power=("ON" if r.get("dut_power") else "OFF"),
                 vdd=f"{r.get('vdd_mv', 0)}mV",
                 mode=r.get("mode") or "─",
@@ -963,7 +970,7 @@ def cmd_daemon_status(args: argparse.Namespace) -> int:
             ))
         else:
             print(fmt.format(
-                serial=r["serial"], port="─", power="─",
+                serial=r["serial"], port="─", link="─", power="─",
                 vdd="─", mode="─", uptime="─",
                 managed=f"{r.get('managed', '─')} (stopped)",
             ))
