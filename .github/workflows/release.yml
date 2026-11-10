@@ -1,0 +1,145 @@
+name: Release
+
+# Builds, tests and publishes the package for a release tag.
+#
+#   * Pushing a `v*` tag builds + tests it and creates a GitHub release with
+#     the sdist and wheel attached. It never publishes to a package index.
+#   * Publishing is manual: Actions → Release → Run workflow, enter the tag
+#     (e.g. v0.1.0) and choose testpypi or pypi. The workflow runs from main
+#     but builds the tag you give it, so tags created before this workflow
+#     existed can still be published.
+#
+# The version comes from the git tag (setuptools-scm); the build fails if the
+# built version doesn't match the tag.
+#
+# Publishing uses OIDC trusted publishing (no API tokens). One-time setup on
+# each index (https://pypi.org/manage/account/publishing/ and the TestPyPI
+# equivalent):
+#
+#   Owner            = m-mcgowan
+#   Repository       = ppk2-python
+#   Project name     = ppk2-python
+#   Workflow name    = release.yml
+#   Environment name = pypi  (or  testpypi)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build, e.g. v0.1.0"
+        required: true
+        type: string
+      publish_target:
+        description: "Where to publish (build-only publishes nowhere)"
+        type: choice
+        options: [build-only, testpypi, pypi]
+        default: build-only
+
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  PKG_DIR: .
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          fetch-depth: 0  # setuptools-scm needs the tags
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        working-directory: ${{ env.PKG_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+          pip install -e ".[dev]"
+
+      - name: Test
+        working-directory: ${{ env.PKG_DIR }}
+        run: pytest tests -v --tb=short
+
+      - name: Build sdist + wheel
+        working-directory: ${{ env.PKG_DIR }}
+        run: python -m build --outdir "$GITHUB_WORKSPACE/dist"
+
+      - name: Check version matches tag
+        id: version
+        run: |
+          expected="${TAG#v}"
+          for f in dist/*; do
+            case "$(basename "$f")" in
+              *-"$expected"-*.whl|*-"$expected".tar.gz) ;;
+              *) echo "::error::$(basename "$f") does not match tag $TAG"; exit 1 ;;
+            esac
+          done
+          echo "version=$expected" >> "$GITHUB_OUTPUT"
+
+      - name: Check metadata
+        run: python -m twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 30
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: dist/*
+          generate_release_notes: true
+
+  publish-testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_target == 'pypi'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
