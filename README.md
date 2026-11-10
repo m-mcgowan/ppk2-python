@@ -5,15 +5,15 @@ Python library and CLI for the Nordic Power Profiler Kit II (PPK2).
 ## Features
 
 - **Device control** — source/ampere meter, voltage, DUT power, 100kHz measurement
-- **File I/O** — save/load `.ppk2` files (nRF Connect Power Profiler compatible) — see [file format](docs/file_format.md)
-- **Daemon server** — keeps the PPK2 open so multiple consumers can share one device. Required for source meter workflows on macOS — see [daemon guide](docs/daemon.md)
+- **File I/O** — save/load `.ppk2` files (nRF Connect Power Profiler compatible) — see [file format](https://github.com/m-mcgowan/ppk2-python/blob/main/docs/file_format.md)
+- **Daemon server** — keeps the PPK2 open so multiple consumers can share one device. Required for source meter workflows on macOS — see [daemon guide](https://github.com/m-mcgowan/ppk2-python/blob/main/docs/daemon.md)
 - **Event annotation** — overlay DUT firmware trace events (Chrome JSON scopes) onto PPK2 digital channels D0–D7 for visual correlation against the power trace
 - **Reporting** — markdown tables, interactive HTML charts, GitHub Actions annotations
 - **Synthetic profiles** — build realistic profiles programmatically with a phase/ramp builder
-- **AI integration** — generate, analyze, and validate profiles using Claude — see [AI integration](docs/ai.md)
-- **Desktop automation** — open `.ppk2` files in nRF Connect via Playwright — see [desktop](docs/desktop.md)
-- **GitHub Action** — power profiling reports in CI workflows — see [GitHub Action](docs/github_action.md)
-- **Firmware management** — query, check against upstream, and flash PPK2 firmware over USB — see [firmware](docs/firmware.md)
+- **AI integration** — generate, analyze, and validate profiles using Claude — see [AI integration](https://github.com/m-mcgowan/ppk2-python/blob/main/docs/ai.md)
+- **Desktop automation** — open `.ppk2` files in nRF Connect via Playwright — see [desktop](https://github.com/m-mcgowan/ppk2-python/blob/main/docs/desktop.md)
+- **GitHub Action** — power profiling reports in CI workflows — see [GitHub Action](https://github.com/m-mcgowan/ppk2-python/blob/main/docs/github_action.md)
+- **Firmware management** — query, check against upstream, and flash PPK2 firmware over USB — see [firmware](https://github.com/m-mcgowan/ppk2-python/blob/main/docs/firmware.md)
 
 ## Status
 
@@ -23,7 +23,7 @@ Python library and CLI for the Nordic Power Profiler Kit II (PPK2).
 regenerated on every build.
 
 <!-- TODO: add screenshot of the generated test report at docs/img/report-screenshot.png and uncomment:
-![Generated test report](docs/img/report-screenshot.png)
+![Generated test report](https://raw.githubusercontent.com/m-mcgowan/ppk2-python/main/docs/img/report-screenshot.png)
 -->
 
 
@@ -112,7 +112,7 @@ with connect_to_daemon(serial="C9F6358A") as a, \
     print(a.measure(2.0).mean_ua, b.measure(2.0).mean_ua)
 ```
 
-See the [daemon guide](docs/daemon.md) for the full lifecycle (startup,
+See the [daemon guide](https://github.com/m-mcgowan/ppk2-python/blob/main/docs/daemon.md) for the full lifecycle (startup,
 shutdown, multi-device state directory, and the underlying limitations).
 
 ### Load and inspect a `.ppk2` file
@@ -161,7 +161,7 @@ save_ppk2(measurement, "annotated.ppk2",
 The HTML report renders embedded scopes as a "Named scopes" table without
 needing a sidecar legend. Events outside the capture window are clamped and
 a warning is logged. See
-[`examples/capture_with_events.py`](examples/capture_with_events.py) for a
+[`examples/capture_with_events.py`](https://github.com/m-mcgowan/ppk2-python/blob/main/examples/capture_with_events.py) for a
 runnable walkthrough including the daemon-client / serial-reader pattern
 for real hardware.
 
@@ -185,7 +185,7 @@ ppk2 firmware [info|check|upgrade|...]      Query or upgrade PPK2 firmware
 
 The single-command CLI shapes (`ppk2 power on`, `ppk2 voltage 3300`, etc.)
 work directly in ampere meter mode. In source meter mode, drive the PPK2
-through the [daemon](docs/daemon.md) so the rail isn't reset between
+through the [daemon](https://github.com/m-mcgowan/ppk2-python/blob/main/docs/daemon.md) so the rail isn't reset between
 commands.
 
 ### A few worked examples
